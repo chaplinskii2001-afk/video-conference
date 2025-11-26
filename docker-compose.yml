@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  video-processor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: video_processor
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./results:/app/results
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
+      - PYANNOTE_DONT_ASK_USER_FOR_EMAIL=1
+      - TRANSFORMERS_OFFLINE=0
+      - MODEL_NAME=Qwen/Qwen3-4B-Instruct-2507
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
