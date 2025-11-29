@@ -17,28 +17,30 @@ from processing.video_processor import VideoProcessor
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("/app/logs/app.log"),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("/app/logs/app.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
 
 def _get_tomsk_time():
     """Получение текущего времени в Томске (UTC+7)"""
     tomsk_tz = timezone(timedelta(hours=7))
     return datetime.now(tomsk_tz)
 
+
 # Глобальные переменные
 processor = None
 UPLOAD_DIR = "uploads"
 RESULTS_DIR = "results"
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Запуск приложения... ({_get_tomsk_time().strftime('%Y-%m-%d %H:%M:%S')})")
+    logger.info(
+        "Запуск приложения... ({_get_tomsk_time().strftime('%Y-%m-%d %H:%M:%S')})"
+    )
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs("/app/logs", exist_ok=True)
@@ -52,7 +54,7 @@ async def lifespan(app: FastAPI):
     model_dirs = {
         "whisper": "/app/models/whisper",
         "speechbrain": "/app/models/speechbrain",
-        "qwen": "/app/models/qwen"
+        "qwen": "/app/models/qwen",
     }
 
     for model_name, model_path in model_dirs.items():
@@ -67,16 +69,16 @@ async def lifespan(app: FastAPI):
     yield  # Здесь приложение работает
 
     # Shutdown
-    logger.info("Остановка приложения... ({_get_tomsk_time().strftime('%Y-%m-%d %H:%M:%S')})")
+    logger.info(
+        "Остановка приложения... ({_get_tomsk_time().strftime('%Y-%m-%d %H:%M:%S')})"
+    )
     if processor:
         await processor.force_gpu_cleanup()
         await processor.unload_current_model()
     logger.info("Приложение остановлено")
 
-app = FastAPI(
-    title="Video Conference Processor",
-    lifespan=lifespan
-)
+
+app = FastAPI(title="Video Conference Processor", lifespan=lifespan)
 
 # CORS
 app.add_middleware(
@@ -89,6 +91,7 @@ app.add_middleware(
 
 # Монтирование статических файлов
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/memory-status")
 async def memory_status():
@@ -103,10 +106,11 @@ async def memory_status():
         return {
             "gpu_memory": gpu_info,
             "system_memory": system_info,
-            "current_loaded_model": processor.current_loaded_model
+            "current_loaded_model": processor.current_loaded_model,
         }
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.get("/model-status")
 async def model_status():
@@ -116,7 +120,7 @@ async def model_status():
 
         models_info = {
             "whisper_loaded": processor.whisper_model is not None,
-            "whisper_model_size": getattr(processor, 'whisper_model_size', 'medium'),
+            "whisper_model_size": getattr(processor, "whisper_model_size", "medium"),
             "diarization_loaded": processor.diarization_pipeline is not None,
             "qwen_loaded": processor.qwen_model is not None,
             "current_loaded_model": processor.current_loaded_model,
@@ -127,43 +131,38 @@ async def model_status():
             gpu_info = {
                 "gpu_available": True,
                 "gpu_name": torch.cuda.get_device_name(0),
-                "gpu_memory": torch.cuda.get_device_properties(0).total_memory / 1024**3
+                "gpu_memory": torch.cuda.get_device_properties(0).total_memory
+                / 1024**3,
             }
         else:
             gpu_info = {"gpu_available": False}
 
-        return {
-            "models": models_info,
-            "gpu": gpu_info
-        }
+        return {"models": models_info, "gpu": gpu_info}
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.get("/check-ffmpeg")
 async def check_ffmpeg():
     try:
-        result = subprocess.run(
-            ['ffmpeg', '-version'],
-            capture_output=True,
-            text=True
-        )
-        ffmpeg_info = result.stdout.split('\n')[0] if result.stdout else "No output"
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+        ffmpeg_info = result.stdout.split("\n")[0] if result.stdout else "No output"
 
         return {
             "ffmpeg_available": result.returncode == 0,
-            "ffmpeg_version": ffmpeg_info
+            "ffmpeg_version": ffmpeg_info,
         }
     except Exception as e:
         return {"ffmpeg_available": False, "error": str(e)}
+
 
 @app.post("/process")
 async def process_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(None),
     url: str = Form(None),
-    summary_type: str = Form("standard")
+    summary_type: str = Form("standard"),
 ):
-
     """Endpoint для запуска обработки медиа"""
     if summary_type not in ["standard", "protocol"]:
         summary_type = "standard"
@@ -175,7 +174,7 @@ async def process_video(
         media_type = "video"
         if file:
             file_ext = os.path.splitext(file.filename)[1].lower()
-            audio_extensions = ['.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg']
+            audio_extensions = [".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"]
             if file_ext in audio_extensions:
                 media_type = "audio"
 
@@ -186,22 +185,31 @@ async def process_video(
             file if file else None,
             url,
             media_type,
-            summary_type
+            summary_type,
         )
 
-        logger.info(f"Задача {task_id} запущена в фоне (тип суммаризации: {summary_type})")
+        logger.info(
+            f"Задача {task_id} запущена в фоне (тип суммаризации: {summary_type})"
+        )
 
         return {
             "task_id": task_id,
             "status": "processing",
-            "summary_type": summary_type
+            "summary_type": summary_type,
         }
 
     except Exception as e:
         logger.error(f"Ошибка запуска обработки: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def process_media_background(task_id: str, file: UploadFile = None, url: str = None, media_type: str = "video", summary_type: str = "standard"):
+
+async def process_media_background(
+    task_id: str,
+    file: UploadFile = None,
+    url: str = None,
+    media_type: str = "video",
+    summary_type: str = "standard",
+):
     """Фоновая обработка медиа"""
     processor = VideoProcessor(task_id=task_id)
     file_path = None
@@ -209,10 +217,7 @@ async def process_media_background(task_id: str, file: UploadFile = None, url: s
     try:
         # Обновляем прогресс
         task_manager.update_progress(
-            task_id,
-            5,
-            "download",
-            f"Начало обработки {media_type}"
+            task_id, 5, "download", f"Начало обработки {media_type}"
         )
 
         # Сохраняем файл или скачиваем по URL
@@ -221,8 +226,7 @@ async def process_media_background(task_id: str, file: UploadFile = None, url: s
             file_path = f"uploads/{task_id}{file_ext}"
 
             task_manager.update_progress(
-                task_id, 10, "download",
-                f"Сохранение файла: {file.filename}"
+                task_id, 10, "download", f"Сохранение файла: {file.filename}"
             )
 
             async with aiofiles.open(file_path, "wb") as f:
@@ -233,8 +237,7 @@ async def process_media_background(task_id: str, file: UploadFile = None, url: s
 
         elif url:
             task_manager.update_progress(
-                task_id, 10, "download",
-                f"Скачивание по URL: {url}"
+                task_id, 10, "download", f"Скачивание по URL: {url}"
             )
             file_path = await processor.download_from_url(url, task_id)
         else:
@@ -242,11 +245,15 @@ async def process_media_background(task_id: str, file: UploadFile = None, url: s
 
         # Обрабатываем медиа
         task_manager.update_progress(
-            task_id, 15, "preprocessing",
-            f"Подготовка к обработке {media_type} (суммаризация: {summary_type})"
+            task_id,
+            15,
+            "preprocessing",
+            f"Подготовка к обработке {media_type} (суммаризация: {summary_type})",
         )
 
-        result = await processor.process_media(file_path, task_id, media_type, summary_type)
+        result = await processor.process_media(
+            file_path, task_id, media_type, summary_type
+        )
 
         # Сохраняем результат
         task_manager.complete_task(task_id, result)
@@ -265,6 +272,7 @@ async def process_media_background(task_id: str, file: UploadFile = None, url: s
             except Exception as e:
                 logger.warning(f"Не удалось удалить временный файл {file_path}: {e}")
 
+
 @app.get("/progress/{task_id}")
 async def get_progress(task_id: str):
     """Получение прогресса по задаче"""
@@ -280,8 +288,9 @@ async def get_progress(task_id: str):
         "current_stage": task_info["current_stage"],
         "logs": task_info["logs"][-10:],  # Последние 10 логов
         "result": task_info.get("result"),
-        "error": task_info.get("error")
+        "error": task_info.get("error"),
     }
+
 
 @app.get("/download/{task_id}/{file_type}")
 async def download_file(task_id: str, file_type: str):
@@ -310,21 +319,20 @@ async def download_file(task_id: str, file_type: str):
         raise HTTPException(404, "Файл не найден")
 
     logger.info(f"Файл найден, отправка: {file_path}")
-    return FileResponse(
-        path=file_path,
-        media_type='text/markdown',
-        filename=filename
-    )
+    return FileResponse(path=file_path, media_type="text/markdown", filename=filename)
+
 
 # Периодическая очистка старых задач
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(cleanup_worker())
 
+
 async def cleanup_worker():
     while True:
         await asyncio.sleep(3600)  # Каждый час
         task_manager.cleanup_old_tasks()
+
 
 @app.get("/health")
 async def health_check():
@@ -335,15 +343,16 @@ async def health_check():
         "uploads": os.path.exists(UPLOAD_DIR),
         "results": os.path.exists(RESULTS_DIR),
         "models_whisper": os.path.exists("/app/models/whisper"),
-        "models_qwen": os.path.exists("/app/models/qwen")
+        "models_qwen": os.path.exists("/app/models/qwen"),
     }
 
     return {
         "status": "healthy",
         "gpu_available": gpu_status,
         "directories": dirs_status,
-        "server_time_tomsk": _get_tomsk_time().strftime('%Y-%m-%d %H:%M:%S')
+        "server_time_tomsk": _get_tomsk_time().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
 
 @app.get("/gpu-status")
 async def gpu_status():
@@ -356,12 +365,11 @@ async def gpu_status():
             gpu_info = {
                 "gpu_count": gpu_count,
                 "current_device": torch.cuda.current_device(),
-                "device_name": torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
+                "device_name": (
+                    torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
+                ),
             }
 
-        return {
-            "gpu_available": gpu_available,
-            "gpu_info": gpu_info
-        }
+        return {"gpu_available": gpu_available, "gpu_info": gpu_info}
     except Exception as e:
         return {"gpu_available": False, "error": str(e)}
