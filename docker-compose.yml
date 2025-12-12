@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        HF_TOKEN: ${HF_TOKEN}
     container_name: video_processor
     ports:
       - "8000:8000"
@@ -12,6 +14,10 @@ services:
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./results:/app/results
+      - ./main.py:/app/main.py
+      - ./task_manager.py:/app/task_manager.py
+      - ./processing:/app/processing
+      - ./static:/app/static
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - HF_TOKEN=${HF_TOKEN}
@@ -25,5 +31,5 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     restart: unless-stopped

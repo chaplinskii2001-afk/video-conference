@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
 
     model_dirs = {
         "whisper": "/app/models/whisper",
-        "speechbrain": "/app/models/speechbrain",
+        "pyannote": "/app/models/pyannote",
         "qwen": "/app/models/qwen",
     }
 
@@ -88,6 +88,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage().find("GET /progress") == -1
+
+
+# Применяем фильтр к логгеру uvicorn.access
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # Монтирование статических файлов
 app.mount("/static", StaticFiles(directory="static"), name="static")

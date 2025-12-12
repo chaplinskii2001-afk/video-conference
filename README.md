@@ -199,7 +199,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 nvidia-smi
 
 # Проверить Docker GPU support
-docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.4.1-runtime-ubuntu22.04 nvidia-smi
 ```
 
 ### Ошибка "CUDA out of memory"
