@@ -87,13 +87,13 @@ model_config = get_model_config()
 
 app = FastAPI(title="Video Conference Processor", lifespan=lifespan)
 
-# CORS - безопасно настроено
+# CORS - адаптировано для учебной/исследовательской среды
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 
@@ -407,20 +407,231 @@ async def health_check():
 
 @app.get("/gpu-status")
 async def gpu_status():
+    """Детальная информация о GPU для исследовательских целей"""
     try:
-        gpu_available = torch.cuda.is_available()
-        gpu_info = {}
-
+        from config import detect_gpu_capabilities, get_performance_config
+        
+        gpu_capabilities = detect_gpu_capabilities()
+        gpu_available = gpu_capabilities["gpu_available"]
+        
         if gpu_available:
-            gpu_count = torch.cuda.device_count()
+            perf_config = get_performance_config(gpu_capabilities["memory_gb"])
             gpu_info = {
-                "gpu_count": gpu_count,
-                "current_device": torch.cuda.current_device(),
-                "device_name": (
-                    torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
-                ),
+                "capabilities": gpu_capabilities,
+                "recommended_performance": perf_config,
+                "suitable_for_research": gpu_capabilities.get("suitable_for_research", False),
+            }
+        else:
+            gpu_info = {
+                "gpu_available": False,
+                "recommendation": "Рекомендуется использовать GPU для исследований",
             }
 
         return {"gpu_available": gpu_available, "gpu_info": gpu_info}
     except Exception as e:
         return {"gpu_available": False, "error": str(e)}
+
+
+@app.get("/educational-setup")
+async def educational_setup():
+    """Информация о настройках для учебной/исследовательской среды"""
+    try:
+        from config import get_educational_setup
+        
+        setup_info = get_educational_setup()
+        return {
+            "educational_mode": True,
+            "setup_info": setup_info,
+            "recommended_usage": _get_usage_recommendations(setup_info),
+        }
+    except Exception as e:
+        return {"educational_mode": True, "error": str(e)}
+
+
+@app.get("/performance-recommendations")
+async def performance_recommendations():
+    """Рекомендации по оптимизации производительности"""
+    try:
+        from config import detect_gpu_capabilities, get_performance_config
+        
+        gpu_info = detect_gpu_capabilities()
+        if gpu_info["gpu_available"]:
+            perf_config = get_performance_config(gpu_info["memory_gb"])
+            return {
+                "current_hardware": gpu_info,
+                "recommended_settings": perf_config,
+                "optimization_tips": _get_optimization_tips(gpu_info["memory_gb"]),
+            }
+        else:
+            return {
+                "current_hardware": gpu_info,
+                "recommended_settings": "cpu_only",
+                "optimization_tips": [
+                    "Рекомендуется использовать GPU для ускорения",
+                    "Уменьшите размер обрабатываемых файлов",
+                    "Используйте квантование моделей для экономии памяти"
+                ],
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/system-capacity")
+async def system_capacity():
+    """Анализ системной производительности для исследований"""
+    try:
+        from config import detect_gpu_capabilities
+        import psutil
+        
+        gpu_info = detect_gpu_capabilities()
+        cpu_info = {
+            "cpu_count": psutil.cpu_count(),
+            "cpu_freq": psutil.cpu_freq()._asdict() if psutil.cpu_freq() else None,
+            "memory_total_gb": round(psutil.virtual_memory().total / 1024**3, 1),
+        }
+        
+        # Анализ пригодности для исследований
+        research_capacity = _analyze_research_capacity(gpu_info, cpu_info)
+        
+        return {
+            "gpu_info": gpu_info,
+            "cpu_info": cpu_info,
+            "research_capacity": research_capacity,
+            "recommendations": research_capacity["recommendations"],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _get_usage_recommendations(setup_info: dict) -> dict:
+    """Генерация рекомендаций по использованию"""
+    hardware_info = setup_info["hardware_info"]
+    
+    recommendations = {
+        "file_size_recommendations": [],
+        "processing_tips": [],
+        "research_suggestions": [],
+    }
+    
+    if hardware_info["gpu_available"]:
+        memory_gb = hardware_info["memory_gb"]
+        
+        if memory_gb >= 16:
+            recommendations["file_size_recommendations"].extend([
+                "Можно обрабатывать файлы до 1GB",
+                "Поддерживается пакетная обработка",
+                "Рекомендуется высокое качество моделей"
+            ])
+            recommendations["processing_tips"].extend([
+                "Используйте параллельную обработку",
+                "Включите экспериментальные функции",
+                "Сохраняйте промежуточные результаты"
+            ])
+        elif memory_gb >= 8:
+            recommendations["file_size_recommendations"].extend([
+                "Рекомендуется файлы до 500MB",
+                "Лучше обрабатывать последовательно"
+            ])
+            recommendations["processing_tips"].extend([
+                "Используйте квантование 8-bit для Whisper",
+                "Контролируйте использование памяти"
+            ])
+        else:
+            recommendations["file_size_recommendations"].extend([
+                "Ограничьтесь файлами до 100MB",
+                "Обрабатывайте короткие записи"
+            ])
+    else:
+        recommendations["file_size_recommendations"].extend([
+            "Рекомендуется использовать только для простых задач",
+            "Файлы должны быть короткими (до 30 минут)"
+        ])
+    
+    return recommendations
+
+
+def _get_optimization_tips(memory_gb: float) -> list:
+    """Советы по оптимизации производительности"""
+    tips = []
+    
+    if memory_gb >= 24:
+        tips.extend([
+            "Используйте модели без квантования для лучшего качества",
+            "Включите пакетную обработку",
+            "Экспериментируйте с разными параметрами модели"
+        ])
+    elif memory_gb >= 12:
+        tips.extend([
+            "Используйте 8-bit квантование для баланса качества/производительности",
+            "Оптимально для большинства исследовательских задач"
+        ])
+    elif memory_gb >= 8:
+        tips.extend([
+            "Обязательно используйте квантование моделей",
+            "Обрабатывайте файлы последовательно",
+            "Мониторьте использование памяти"
+        ])
+    else:
+        tips.extend([
+            "Используйте только для демонстрации и обучения",
+            "Ограничьтесь короткими файлами (до 30 минут)",
+            "Готовьтесь к длительному времени обработки"
+        ])
+    
+    return tips
+
+
+def _analyze_research_capacity(gpu_info: dict, cpu_info: dict) -> dict:
+    """Анализ пригодности для исследований"""
+    capacity = {
+        "overall_rating": "poor",
+        "suitable_for_research": False,
+        "recommendations": [],
+        "limitations": [],
+    }
+    
+    gpu_memory = gpu_info.get("memory_gb", 0)
+    cpu_cores = cpu_info.get("cpu_count", 1)
+    total_memory = cpu_info.get("memory_total_gb", 0)
+    
+    # Оценка общей производительности
+    if gpu_memory >= 24 and cpu_cores >= 8 and total_memory >= 32:
+        capacity["overall_rating"] = "excellent"
+        capacity["suitable_for_research"] = True
+        capacity["recommendations"].extend([
+            "Отлично подходит для серьезных исследований",
+            "Можно использовать для обучения моделей",
+            "Поддерживает пакетную обработку"
+        ])
+    elif gpu_memory >= 12 and cpu_cores >= 6 and total_memory >= 16:
+        capacity["overall_rating"] = "good"
+        capacity["suitable_for_research"] = True
+        capacity["recommendations"].extend([
+            "Хорошо подходит для большинства исследований",
+            "Рекомендуется использовать квантование моделей"
+        ])
+    elif gpu_memory >= 8 and cpu_cores >= 4 and total_memory >= 8:
+        capacity["overall_rating"] = "acceptable"
+        capacity["suitable_for_research"] = True
+        capacity["recommendations"].extend([
+            "Минимальные требования для исследований",
+            "Используйте последовательную обработку",
+            "Ограничьте размер файлов"
+        ])
+        capacity["limitations"].extend([
+            "Ограниченная производительность",
+            "Не подходит для обучения моделей"
+        ])
+    else:
+        capacity["overall_rating"] = "limited"
+        capacity["recommendations"].extend([
+            "Подходит только для демонстрации и обучения",
+            "Для серьезных исследований требуется более мощное железо"
+        ])
+        capacity["limitations"].extend([
+            "Низкая производительность",
+            "Длительное время обработки",
+            "Ограниченные возможности для исследований"
+        ])
+    
+    return capacity
