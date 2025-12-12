@@ -6,25 +6,65 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        HF_TOKEN: ${HF_TOKEN}
-    container_name: video_processor
+        HF_TOKEN: ${HF_TOKEN:-}
+        EDUCATIONAL_MODE: ${EDUCATIONAL_MODE:-true}
+        PERFORMANCE_LEVEL: ${PERFORMANCE_LEVEL:-balanced}
+    container_name: video_processor_educational
     ports:
       - "8000:8000"
     volumes:
+      # Основные директории
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./results:/app/results
-      - ./main.py:/app/main.py
-      - ./task_manager.py:/app/task_manager.py
-      - ./processing:/app/processing
-      - ./static:/app/static
+      
+      # Образовательные директории для исследований
+      - ./data:/app/data  # Для экспериментальных данных
+      - ./configs:/app/configs  # Конфигурационные файлы
+      - ./notebooks:/app/notebooks  # Jupyter notebooks
+      - ./experiments:/app/experiments  # Результаты экспериментов
+      
+      # Исходный код (только для чтения)
+      - ./main.py:/app/main.py:ro
+      - ./task_manager.py:/app/task_manager.py:ro
+      - ./config.py:/app/config.py:ro
+      - ./exceptions.py:/app/exceptions.py:ro
+      - ./types.py:/app/types.py:ro
+      - ./processing:/app/processing:ro
+      - ./static:/app/static:ro
+      - ./EDUCATIONAL_GUIDE.md:/app/EDUCATIONAL_GUIDE.md:ro
+    
     environment:
+      # Основные настройки
       - CUDA_VISIBLE_DEVICES=0
-      - HF_TOKEN=${HF_TOKEN}
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
+      - HF_TOKEN=${HF_TOKEN:-}
+      
+      # Образовательные настройки
+      - EDUCATIONAL_MODE=${EDUCATIONAL_MODE:-true}
+      - PERFORMANCE_LEVEL=${PERFORMANCE_LEVEL:-balanced}
+      - ENABLE_EXPERIMENTAL_FEATURES=${ENABLE_EXPERIMENTAL_FEATURES:-true}
+      
+      # PyTorch настройки для образовательной среды
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      
+      # AI модели настройки
       - PYANNOTE_DONT_ASK_USER_FOR_EMAIL=1
       - TRANSFORMERS_OFFLINE=0
       - MODEL_NAME=Qwen/Qwen3-4B-Instruct-2507
+      
+      # Образовательные переменные для исследований
+      - MAX_FILE_SIZE_MB=1000  # Увеличено для исследований
+      - MAX_PROCESSING_TIME_HOURS=4  # Длительные задачи
+      - SAVE_INTERMEDIATE_RESULTS=true
+      - DETAILED_LOGGING=true
+      - MULTIPLE_LANGUAGE_SUPPORT=true
+      
+      # Мониторинг и отладка
+      - ENABLE_DEBUG_ENDPOINTS=true
+      - ENABLE_PERFORMANCE_MONITORING=true
+      - LOG_LEVEL=INFO
+    
     deploy:
       resources:
         reservations:
@@ -32,4 +72,76 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
+        limits:
+          memory: 8G  # Ограничение памяти для стабильности
+          cpus: '4.0'
+    
+    # Перезапуск политика для учебной среды
     restart: unless-stopped
+    
+    # Health check для образовательной среды
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Возможности для отладки в образовательной среде
+    cap_add:
+      - SYS_PTRACE  # Для отладки
+    cap_drop:
+      - ALL
+    
+    # Лимиты для образовательной среды
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+  # GPU мониторинг для исследований (опционально)
+  gpu-monitor:
+    image: nvidia/gpu-monitoring-tools:latest
+    container_name: gpu_monitor_educational
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./monitoring:/monitoring
+    command: >
+      bash -c "
+        mkdir -p /monitoring
+        while true; do
+          nvidia-smi --query-gpu=timestamp,name,pci.bus_id,driver_version,pci.pci,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used --format=csv,noheader,nounits > /monitoring/gpu_stats_$(date +%Y%m%d_%H%M%S).csv
+          sleep 30
+        done
+      "
+    depends_on:
+      - video-processor
+
+# Создание сетей для образовательной среды
+networks:
+  default:
+    name: educational_network
+    driver: bridge
+
+# Создание volumes для образовательной среды
+volumes:
+  # Основные volumes
+  logs:
+    driver: local
+  uploads:
+    driver: local
+  results:
+    driver: local
+  
+  # Образовательные volumes для исследований
+  data:
+    driver: local
+  configs:
+    driver: local
+  notebooks:
+    driver: local
+  experiments:
+    driver: local
+  monitoring:
+    driver: local
