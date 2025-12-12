@@ -5,14 +5,16 @@ import logging
 import subprocess
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from task_manager import task_manager
 import aiofiles
 import torch
 from processing.video_processor import VideoProcessor
+from config import get_settings, get_security_config, get_model_config
 
 # Настройка логирования
 logging.basicConfig(
@@ -78,15 +80,20 @@ async def lifespan(app: FastAPI):
     logger.info("Приложение остановлено")
 
 
+# Получаем настройки
+settings = get_settings()
+security_config = get_security_config()
+model_config = get_model_config()
+
 app = FastAPI(title="Video Conference Processor", lifespan=lifespan)
 
-# CORS
+# CORS - безопасно настроено
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -172,9 +179,42 @@ async def process_video(
     url: str = Form(None),
     summary_type: str = Form("standard"),
 ):
-    """Endpoint для запуска обработки медиа"""
+    """
+    Endpoint для запуска обработки медиа с валидацией файлов
+    """
+    # Валидация параметров
     if summary_type not in ["standard", "protocol"]:
         summary_type = "standard"
+    
+    if not file and not url:
+        raise HTTPException(
+            status_code=400, 
+            detail="Необходимо предоставить файл или URL"
+        )
+    
+    if file and url:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя одновременно загружать файл и указывать URL"
+        )
+    
+    # Валидация файла
+    if file:
+        # Проверяем расширение
+        if not security_config.validate_file_extension(file.filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Неподдерживаемый формат файла. Разрешены: {', '.join(sorted(settings.ALLOWED_EXTENSIONS))}"
+            )
+        
+        # Проверяем размер (если возможно)
+        if hasattr(file, 'size') and file.size:
+            if not security_config.validate_file_size(file.size):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Размер файла превышает максимальный ({settings.MAX_FILE_SIZE_MB}MB)"
+                )
+    
     try:
         task_id = str(uuid.uuid4())
         task_manager.create_task(task_id)
@@ -183,8 +223,7 @@ async def process_video(
         media_type = "video"
         if file:
             file_ext = os.path.splitext(file.filename)[1].lower()
-            audio_extensions = [".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"]
-            if file_ext in audio_extensions:
+            if file_ext in settings.ALLOWED_AUDIO_EXTENSIONS:
                 media_type = "audio"
 
         # Запускаем обработку в фоне
@@ -205,11 +244,14 @@ async def process_video(
             "task_id": task_id,
             "status": "processing",
             "summary_type": summary_type,
+            "media_type": media_type,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Ошибка запуска обработки: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
 
 
 async def process_media_background(

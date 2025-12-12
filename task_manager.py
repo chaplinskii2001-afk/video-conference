@@ -3,6 +3,7 @@ import uuid
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 import logging
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -10,11 +11,12 @@ logger = logging.getLogger(__name__)
 class TaskManager:
     def __init__(self):
         self.tasks: Dict[str, Dict] = {}
-        self.cleanup_interval = 300  # 5 минут
+        self.settings = get_settings()
+        self.cleanup_interval = self.settings.CLEANUP_INTERVAL_SECONDS
 
     def _get_tomsk_time(self):
         """Получение текущего времени в Томске (UTC+7)"""
-        tomsk_tz = timezone(timedelta(hours=7))
+        tomsk_tz = timezone(timedelta(hours=self.settings.TOMSK_TIMEZONE_OFFSET))
         return datetime.now(tomsk_tz)
 
     def create_task(self, task_id: str = None) -> str:
@@ -52,8 +54,8 @@ class TaskManager:
             self.tasks[task_id]["logs"].append(log_entry)
 
             # Ограничиваем количество логов
-            if len(self.tasks[task_id]["logs"]) > 50:
-                self.tasks[task_id]["logs"] = self.tasks[task_id]["logs"][-50:]
+            if len(self.tasks[task_id]["logs"]) > self.settings.LOG_RETENTION_COUNT:
+                self.tasks[task_id]["logs"] = self.tasks[task_id]["logs"][-self.settings.LOG_RETENTION_COUNT:]
 
         logger.debug(f"Обновлен прогресс задачи {task_id}: {percent}%, этап: {stage}")
 
