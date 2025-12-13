@@ -39,7 +39,8 @@ RUN python3 -c "from transformers import WhisperProcessor, WhisperForConditional
     WhisperProcessor.from_pretrained('bond005/whisper-podlodka-turbo'); \
     WhisperForConditionalGeneration.from_pretrained('bond005/whisper-podlodka-turbo'); \
     print('Whisper model downloaded')"
-
+    
+# 2. PyAnnote
 RUN python3 -c "import torch; import torchaudio; \
     from pyannote.audio import Pipeline; \
     hf_token = '$HF_TOKEN'; \
