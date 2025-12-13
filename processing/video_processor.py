@@ -177,9 +177,12 @@ class VideoProcessor:
         self.gpu_manager.take_snapshot("before_transcription")
         
         # Загружаем Whisper
+        self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
         success = await self.model_manager.load_whisper()
         if not success:
             raise Exception("Не удалось загрузить Whisper модель")
+        
+        self._update_progress(50, "transcription", "Транскрипция речи...")
         
         try:
             result = self.model_manager.whisper_pipeline(audio_path)
@@ -222,9 +225,12 @@ class VideoProcessor:
         self.gpu_manager.take_snapshot("before_diarization")
         
         # Загружаем PyAnnote
+        self._update_progress(58, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
         success = await self.model_manager.load_diarization()
         if not success:
             raise Exception("Не удалось загрузить PyAnnote модель")
+        
+        self._update_progress(62, "diarization", "Определение спикеров...")
         
         try:
             # Загружаем аудио в память
@@ -509,9 +515,12 @@ class VideoProcessor:
         self.gpu_manager.take_snapshot("before_summarization")
         
         # Загружаем Qwen
+        self._update_progress(80, "loading_models", "Загрузка модели суммаризации (Qwen)...")
         success = await self.model_manager.load_qwen()
         if not success:
             raise Exception("Не удалось загрузить Qwen модель")
+        
+        self._update_progress(85, "summarization", "Создание документа...")
         
         try:
             # Разбиваем текст на части
@@ -655,14 +664,15 @@ class VideoProcessor:
             self.gpu_manager.take_snapshot("initial")
             
             # 1. ПОДГОТОВКА АУДИО
-            self._update_progress(20, "audio_extraction", "Подготовка аудио...")
+            self._update_progress(20, "audio_extraction", "Извлечение аудиодорожки...")
             if media_type == "audio":
                 audio_path = self.process_audio_file(file_path, task_id)
             else:
                 audio_path = self.extract_audio(file_path, task_id)
             
-            # 2. ТРАНСКРИПЦИЯ
-            self._update_progress(30, "transcription", "Транскрипция речи...")
+            # 2. ЗАГРУЗКА МОДЕЛЕЙ И ТРАНСКРИПЦИЯ
+            self._update_progress(35, "loading_models", "Загрузка моделей ИИ...")
+            self._update_progress(45, "transcription", "Транскрипция речи...")
             transcription_segments = await self.transcribe_audio(audio_path)
             
             # 3. ДИАРИЗАЦИЯ
@@ -681,7 +691,7 @@ class VideoProcessor:
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
             
             # 5. СУММАРИЗАЦИЯ
-            self._update_progress(85, "summarization", "Создание краткого содержания...")
+            self._update_progress(85, "summarization", "Создание документа...")
             summary = await self.summarize_text(full_text, summary_type)
             
             # 6. ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ

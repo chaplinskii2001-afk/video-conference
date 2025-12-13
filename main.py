@@ -222,9 +222,9 @@ async def process_media_background(
     file_path = None
 
     try:
-        # Обновляем прогресс
+        # Обновляем прогресс - инициализация
         task_manager.update_progress(
-            task_id, 5, "download", f"Начало обработки {media_type}"
+            task_id, 5, "initialization", f"Начало обработки {media_type}"
         )
 
         # Сохраняем файл или скачиваем по URL
@@ -293,6 +293,7 @@ async def get_progress(task_id: str):
         "status": task_info["status"],
         "percent": task_info["percent"],
         "current_stage": task_info["current_stage"],
+        "current_stage_display": task_info.get("current_stage_display", {}),
         "logs": task_info["logs"][-10:],  # Последние 10 логов
         "result": task_info.get("result"),
         "error": task_info.get("error"),
