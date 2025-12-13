@@ -386,11 +386,12 @@ class VideoProcessor:
         """
         Суммаризация одного чанка текста
         
-        Важные исправления:
+        Исправления обрезания суммаризации:
         - max_length при токенизации увеличен с 12000 до 24000
-          Причина: коротких файлов ограничивались в контексте
-        - Добавлен явный max_length в generate(): input_length + max_tokens
-          Причина: гарантирует полную генерацию output токенов
+          Позволяет модели видеть больше контекста для анализа
+        - Добавлен min_new_tokens для гарантии минимального выхода
+          Гарантирует что модель сгенерирует не менее 80% от max_tokens
+        - Логирование длины input и output для отладки
         """
         # Шаблоны для разных типов суммаризации
         if summary_type == "standard":
@@ -439,17 +440,22 @@ class VideoProcessor:
             max_length=24000
         ).to(self.model_manager.qwen_model.device)
         
+        input_length = len(inputs.input_ids[0])
+        self.logger.info(f"Суммаризация чанка: input_tokens={input_length}, max_new_tokens={max_tokens}")
+        
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
-                max_length=len(inputs.input_ids[0]) + max_tokens,
+                min_new_tokens=max(100, int(max_tokens * 0.8)),
                 do_sample=False,
                 num_beams=1,
                 repetition_penalty=1.05,
             )
         
         generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
+        self.logger.info(f"Сгенерировано токенов: {len(generated_ids)} (ожидалось {max_tokens})")
+        
         summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
             skip_special_tokens=True
@@ -465,11 +471,12 @@ class VideoProcessor:
         """
         Объединение нескольких суммаризаций в одну
         
-        Важные исправления:
+        Исправления обрезания суммаризации:
         - max_length при токенизации увеличен с 24000 до 32000
-          Причина: больше контекста для объединения нескольких суммаризаций
-        - Добавлен явный max_length в generate(): input_length + max_new_tokens
-          Причина: гарантирует полную генерацию 7000 новых токенов
+          Позволяет модели видеть больше контекста при объединении
+        - Добавлен min_new_tokens для гарантии минимального выхода
+          Гарантирует что модель сгенерирует не менее 80% от max_new_tokens (5600+)
+        - Логирование длины input и output для отладки
         """
         if summary_type == "standard":
             system_message = "Объедини суммаризации в ЕДИНЫЙ структурированный документ. Убери дубликаты."
@@ -497,16 +504,21 @@ class VideoProcessor:
             max_length=32000
         ).to(self.model_manager.qwen_model.device)
         
+        input_length = len(inputs.input_ids[0])
+        self.logger.info(f"Объединение суммаризаций: input_tokens={input_length}, max_new_tokens={max_new_tokens}")
+        
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                max_length=len(inputs.input_ids[0]) + max_new_tokens,
+                min_new_tokens=max(500, int(max_new_tokens * 0.8)),
                 do_sample=False,
                 repetition_penalty=1.05,
             )
         
         generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
+        self.logger.info(f"Сгенерировано токенов: {len(generated_ids)} (ожидалось {max_new_tokens})")
+        
         final_summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
             skip_special_tokens=True
