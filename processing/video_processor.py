@@ -385,6 +385,12 @@ class VideoProcessor:
     ) -> str:
         """
         Суммаризация одного чанка текста
+        
+        Важные исправления:
+        - max_length при токенизации увеличен с 12000 до 24000
+          Причина: коротких файлов ограничивались в контексте
+        - Добавлен явный max_length в generate(): input_length + max_tokens
+          Причина: гарантирует полную генерацию output токенов
         """
         # Шаблоны для разных типов суммаризации
         if summary_type == "standard":
@@ -430,13 +436,14 @@ class VideoProcessor:
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=12000
+            max_length=24000
         ).to(self.model_manager.qwen_model.device)
         
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
+                max_length=len(inputs.input_ids[0]) + max_tokens,
                 do_sample=False,
                 num_beams=1,
                 repetition_penalty=1.05,
@@ -457,6 +464,12 @@ class VideoProcessor:
     ) -> str:
         """
         Объединение нескольких суммаризаций в одну
+        
+        Важные исправления:
+        - max_length при токенизации увеличен с 24000 до 32000
+          Причина: больше контекста для объединения нескольких суммаризаций
+        - Добавлен явный max_length в generate(): input_length + max_new_tokens
+          Причина: гарантирует полную генерацию 7000 новых токенов
         """
         if summary_type == "standard":
             system_message = "Объедини суммаризации в ЕДИНЫЙ структурированный документ. Убери дубликаты."
@@ -476,17 +489,19 @@ class VideoProcessor:
             add_generation_prompt=True
         )
         
+        max_new_tokens = 7000
         inputs = self.model_manager.qwen_tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=24000
+            max_length=32000
         ).to(self.model_manager.qwen_model.device)
         
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
-                max_new_tokens=7000,
+                max_new_tokens=max_new_tokens,
+                max_length=len(inputs.input_ids[0]) + max_new_tokens,
                 do_sample=False,
                 repetition_penalty=1.05,
             )
