@@ -47,7 +47,6 @@ RUN python3 -c "import torch; import torchaudio; \
     Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', token=hf_token, cache_dir='/app/models/pyannote'); \
     print('PyAnnote model downloaded')"
 
-
 # 3. Qwen
 RUN python3 -c "from huggingface_hub import snapshot_download; \
     import os; \
