@@ -385,6 +385,12 @@ class VideoProcessor:
     ) -> str:
         """
         Суммаризация одного чанка текста
+        
+        Исправления обрезания суммаризации (версия 3):
+        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
+          Блокирует EOS token и гарантирует генерацию до max_new_tokens
+        - max_length при токенизации: 12000 → 24000 (больше контекста)
+        - Логирование input/output токенов для диагностики
         """
         # Шаблоны для разных типов суммаризации
         if summary_type == "standard":
@@ -430,8 +436,11 @@ class VideoProcessor:
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=12000
+            max_length=24000
         ).to(self.model_manager.qwen_model.device)
+        
+        input_length = len(inputs.input_ids[0])
+        self.logger.info(f"Суммаризация чанка: input_tokens={input_length}, max_new_tokens={max_tokens}")
         
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
@@ -440,9 +449,13 @@ class VideoProcessor:
                 do_sample=False,
                 num_beams=1,
                 repetition_penalty=1.05,
+                eos_token_id=None,
+                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
             )
         
-        generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
+        generated_ids = outputs[0][input_length:].tolist()
+        self.logger.info(f"Суммаризация чанка: сгенерировано {len(generated_ids)} токенов (лимит {max_tokens})")
+        
         summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
             skip_special_tokens=True
@@ -457,6 +470,12 @@ class VideoProcessor:
     ) -> str:
         """
         Объединение нескольких суммаризаций в одну
+        
+        Исправления обрезания суммаризации (версия 3):
+        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
+          Блокирует EOS token и гарантирует генерацию до max_new_tokens
+        - max_length при токенизации: 24000 → 32000 (больше контекста)
+        - Логирование input/output токенов для диагностики
         """
         if summary_type == "standard":
             system_message = "Объедини суммаризации в ЕДИНЫЙ структурированный документ. Убери дубликаты."
@@ -476,22 +495,30 @@ class VideoProcessor:
             add_generation_prompt=True
         )
         
+        max_new_tokens = 7000
         inputs = self.model_manager.qwen_tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=24000
+            max_length=32000
         ).to(self.model_manager.qwen_model.device)
+        
+        input_length = len(inputs.input_ids[0])
+        self.logger.info(f"Объединение суммаризаций: input_tokens={input_length}, max_new_tokens={max_new_tokens}")
         
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
-                max_new_tokens=7000,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,
                 repetition_penalty=1.05,
+                eos_token_id=None,
+                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
             )
         
-        generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
+        generated_ids = outputs[0][input_length:].tolist()
+        self.logger.info(f"Объединение суммаризаций: сгенерировано {len(generated_ids)} токенов (лимит {max_new_tokens})")
+        
         final_summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
             skip_special_tokens=True
