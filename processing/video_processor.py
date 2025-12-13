@@ -386,12 +386,11 @@ class VideoProcessor:
         """
         Суммаризация одного чанка текста
         
-        Исправления обрезания суммаризации:
-        - max_length при токенизации увеличен с 12000 до 24000
-          Позволяет модели видеть больше контекста для анализа
-        - Добавлен min_new_tokens для гарантии минимального выхода
-          Гарантирует что модель сгенерирует не менее 80% от max_tokens
-        - Логирование длины input и output для отладки
+        Исправления обрезания суммаризации (версия 3):
+        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
+          Блокирует EOS token и гарантирует генерацию до max_new_tokens
+        - max_length при токенизации: 12000 → 24000 (больше контекста)
+        - Логирование input/output токенов для диагностики
         """
         # Шаблоны для разных типов суммаризации
         if summary_type == "standard":
@@ -447,14 +446,15 @@ class VideoProcessor:
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
-                min_new_tokens=max(100, int(max_tokens * 0.8)),
                 do_sample=False,
                 num_beams=1,
                 repetition_penalty=1.05,
+                eos_token_id=None,
+                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
             )
         
-        generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
-        self.logger.info(f"Сгенерировано токенов: {len(generated_ids)} (ожидалось {max_tokens})")
+        generated_ids = outputs[0][input_length:].tolist()
+        self.logger.info(f"Суммаризация чанка: сгенерировано {len(generated_ids)} токенов (лимит {max_tokens})")
         
         summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
@@ -471,12 +471,11 @@ class VideoProcessor:
         """
         Объединение нескольких суммаризаций в одну
         
-        Исправления обрезания суммаризации:
-        - max_length при токенизации увеличен с 24000 до 32000
-          Позволяет модели видеть больше контекста при объединении
-        - Добавлен min_new_tokens для гарантии минимального выхода
-          Гарантирует что модель сгенерирует не менее 80% от max_new_tokens (5600+)
-        - Логирование длины input и output для отладки
+        Исправления обрезания суммаризации (версия 3):
+        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
+          Блокирует EOS token и гарантирует генерацию до max_new_tokens
+        - max_length при токенизации: 24000 → 32000 (больше контекста)
+        - Логирование input/output токенов для диагностики
         """
         if summary_type == "standard":
             system_message = "Объедини суммаризации в ЕДИНЫЙ структурированный документ. Убери дубликаты."
@@ -511,13 +510,14 @@ class VideoProcessor:
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                min_new_tokens=max(500, int(max_new_tokens * 0.8)),
                 do_sample=False,
                 repetition_penalty=1.05,
+                eos_token_id=None,
+                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
             )
         
-        generated_ids = outputs[0][len(inputs.input_ids[0]):].tolist()
-        self.logger.info(f"Сгенерировано токенов: {len(generated_ids)} (ожидалось {max_new_tokens})")
+        generated_ids = outputs[0][input_length:].tolist()
+        self.logger.info(f"Объединение суммаризаций: сгенерировано {len(generated_ids)} токенов (лимит {max_new_tokens})")
         
         final_summary = self.model_manager.qwen_tokenizer.decode(
             generated_ids,
