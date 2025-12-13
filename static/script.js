@@ -163,79 +163,26 @@ function updateProgressDisplay(data) {
     document.getElementById('progress-bar-fill').style.width = percent + '%';
     document.getElementById('progress-percentage').textContent = percent + '%';
     
-    // Обновляем этапы
-    updateSteps(data.current_stage);
-    
-    // Обновляем логи
-    updateLogs(data.logs || []);
+    // Обновляем текущий этап
+    updateCurrentStage(data.current_stage);
 }
 
-function updateSteps(currentStage) {
-    const stageMapping = {
-        'download': 'step-download',
-        'preprocessing': 'step-download',
-        'audio_extraction': 'step-download',
-        'transcription': 'step-transcription',
-        'loading_models': 'step-transcription',
-        'diarization': 'step-diarization',
-        'merging': 'step-diarization',
-        'summarization': 'step-summarization',
-        'saving': 'step-summarization'
+function updateCurrentStage(stage) {
+    // Преобразуем stage в понятное название
+    const stageNames = {
+        'download': 'Подготовка',
+        'preprocessing': 'Подготовка',
+        'audio_extraction': 'Подготовка',
+        'transcription': 'Транскрипция',
+        'loading_models': 'Транскрипция',
+        'diarization': 'Диаризация',
+        'merging': 'Диаризация',
+        'summarization': 'Создание документа',
+        'saving': 'Создание документа'
     };
     
-    const currentStepId = stageMapping[currentStage];
-    
-    // Сбрасываем все шаги
-    document.querySelectorAll('.status-step').forEach(step => {
-        step.classList.remove('active', 'completed');
-        step.querySelector('.step-icon').textContent = '⏳';
-    });
-    
-    // Отмечаем завершенные и текущий этап
-    const steps = ['step-download', 'step-transcription', 'step-diarization', 'step-summarization'];
-    let foundCurrent = false;
-    
-    for (const stepId of steps) {
-        const step = document.getElementById(stepId);
-        
-        if (stepId === currentStepId) {
-            step.classList.add('active');
-            step.querySelector('.step-icon').textContent = '⚙️';
-            foundCurrent = true;
-        } else if (!foundCurrent) {
-            step.classList.add('completed');
-            step.querySelector('.step-icon').textContent = '✅';
-        }
-    }
-}
-
-function updateLogs(logs) {
-    const logsContainer = document.getElementById('logs-container');
-    logsContainer.innerHTML = '';
-    
-    // Показываем последние 10 логов
-    const recentLogs = logs.slice(-10);
-    
-    recentLogs.forEach(log => {
-        const logEntry = document.createElement('div');
-        logEntry.className = 'log-entry';
-        
-        // Парсим лог: [время] сообщение
-        const match = log.match(/\[(.*?)\]\s*(.*)/);
-        if (match) {
-            logEntry.innerHTML = `
-                <span class="log-time">[${match[1]}]</span>
-                <span class="log-message">${match[2]}</span>
-            `;
-        } else {
-            logEntry.innerHTML = `<span class="log-message">${log}</span>`;
-        }
-        
-        logsContainer.appendChild(logEntry);
-    });
-    
-    // Автоскролл к последнему логу
-    logsContainer.scrollTop = logsContainer.scrollHeight;
+    const stageName = stageNames[stage] || 'Обработка';
+    document.getElementById('current-stage-name').textContent = stageName;
 }
 
 // ==================== Отображение результатов ====================
@@ -291,13 +238,7 @@ function hideProgress() {
 function resetProgress() {
     document.getElementById('progress-bar-fill').style.width = '0%';
     document.getElementById('progress-percentage').textContent = '0%';
-    document.getElementById('logs-container').innerHTML = '';
-    
-    // Сброс всех этапов
-    document.querySelectorAll('.status-step').forEach(step => {
-        step.classList.remove('active', 'completed');
-        step.querySelector('.step-icon').textContent = '⏳';
-    });
+    document.getElementById('current-stage-name').textContent = 'Подготовка';
 }
 
 // ==================== Инициализация при загрузке ====================

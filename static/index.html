@@ -65,40 +65,20 @@
 
             <!-- Progress Section -->
             <div id="progress-section" class="progress-section hidden">
-                <h3>Обработка</h3>
-                
+                <!-- Current Stage Display -->
+                <div class="stage-display">
+                    <div class="stage-content">
+                        <div class="stage-label">Идет обработка</div>
+                        <div class="stage-name" id="current-stage-name">Подготовка</div>
+                    </div>
+                </div>
+
                 <!-- Progress Bar -->
                 <div class="progress-bar-container">
                     <div class="progress-bar-wrapper">
                         <div id="progress-bar-fill" class="progress-bar-fill"></div>
                     </div>
                     <div id="progress-percentage" class="progress-percentage">0%</div>
-                </div>
-
-                <!-- Status Steps -->
-                <div class="status-steps">
-                    <div id="step-download" class="status-step">
-                        <span class="step-icon">⏳</span>
-                        <span class="step-text">Подготовка</span>
-                    </div>
-                    <div id="step-transcription" class="status-step">
-                        <span class="step-icon">⏳</span>
-                        <span class="step-text">Транскрипция</span>
-                    </div>
-                    <div id="step-diarization" class="status-step">
-                        <span class="step-icon">⏳</span>
-                        <span class="step-text">Диаризация</span>
-                    </div>
-                    <div id="step-summarization" class="status-step">
-                        <span class="step-icon">⏳</span>
-                        <span class="step-text">Создание документа</span>
-                    </div>
-                </div>
-
-                <!-- Logs -->
-                <div class="logs-section">
-                    <div class="logs-title">Журнал обработки</div>
-                    <div id="logs-container" class="logs-container"></div>
                 </div>
             </div>
 
