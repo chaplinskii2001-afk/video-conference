@@ -1,87 +1,146 @@
 <!DOCTYPE html>
 <html lang="ru">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Обработчик видео-конференций</title>
+    <title>Система протоколирования совещаний</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-
 <body>
     <div class="container">
-        <h1>Обработчик видео-конференций</h1>
-        <p>Загрузите файл или укажите ссылку для получения текстовой расшифровки и краткого содержания</p>
-        <div class="upload-container">
-            <div class="tabs">
-                <button class="tab-button active" onclick="openTab('file-tab')">Загрузка файла</button>
-                <button class="tab-button" onclick="openTab('url-tab')">Ссылка</button>
-            </div>
-            <div id="file-tab" class="tab-content active">
-                <input type="file" id="file-input" accept=".mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.m4a,.flac,.aac,.ogg" />
-                <label for="file-input" class="file-label">
-                    <span>Выберите файл (видео или аудио)</span>
-                </label>
-                <div class="file-info" id="file-info"></div>
-            </div>
-            <div id="url-tab" class="tab-content">
-                <input type="url" id="url-input" placeholder="https://example.com/video.mp4" />
-            </div>
-            <div class="summary-type-selector">
-                <label for="summary-type">Тип суммаризации:</label>
-                <select id="summary-type">
-                    <option value="standard">Обычная суммаризация</option>
-                    <option value="protocol">Протокол конференции</option>
-                </select>
-            </div>
-            <button id="process-btn" onclick="processVideo()">Обработать</button>
+        <!-- Header -->
+        <div class="header">
+            <h1>Система протоколирования совещаний</h1>
+            <p>Автоматическая транскрипция, диаризация спикеров и создание протоколов</p>
         </div>
-        <div id="progress" class="progress hidden">
-            <h3>Прогресс обработки</h3>
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
+
+        <!-- Main Content -->
+        <div class="content">
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab-button active" onclick="switchTab('file')">Загрузка файла</button>
+                    <button class="tab-button" onclick="switchTab('url')">По ссылке</button>
                 </div>
-                <div class="progress-text" id="progress-text">0%</div>
+
+                <!-- File Tab -->
+                <div id="file-tab" class="tab-content active">
+                    <input type="file" id="file-input" accept=".mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.m4a,.flac,.aac,.ogg">
+                    <label for="file-input">
+                        <div class="file-upload-zone" id="file-upload-zone">
+                            <div class="file-upload-icon">📁</div>
+                            <div class="file-upload-text">Выберите файл или перетащите его сюда</div>
+                            <div class="file-upload-hint">Поддерживаются видео и аудио форматы (до 1 GB)</div>
+                        </div>
+                    </label>
+                    <div id="file-info" class="file-info-card hidden"></div>
+                </div>
+
+                <!-- URL Tab -->
+                <div id="url-tab" class="tab-content">
+                    <div class="url-input-wrapper">
+                        <span class="url-icon">🔗</span>
+                        <input 
+                            type="url" 
+                            id="url-input" 
+                            placeholder="https://youtube.com/watch?v=..." 
+                            autocomplete="off"
+                        >
+                    </div>
+                </div>
+
+                <!-- Summary Type -->
+                <div class="form-group">
+                    <label class="form-label" for="summary-type">Тип документа</label>
+                    <select id="summary-type">
+                        <option value="standard">Краткое содержание</option>
+                        <option value="protocol">Протокол конференции</option>
+                    </select>
+                </div>
+
+                <!-- Process Button -->
+                <button id="process-btn" onclick="startProcessing()">Начать обработку</button>
             </div>
-            <div class="progress-stages">
-                <div class="stage" id="stage-download">
-                    <span class="stage-icon">⏳</span>
-                    <span class="stage-text">Загрузка медиа</span>
+
+            <!-- Progress Section -->
+            <div id="progress-section" class="progress-section hidden">
+                <h3>Обработка</h3>
+                
+                <!-- Progress Bar -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar-wrapper">
+                        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                    </div>
+                    <div id="progress-percentage" class="progress-percentage">0%</div>
                 </div>
-                <div class="stage" id="stage-transcription">
-                    <span class="stage-icon">⏳</span>
-                    <span class="stage-text">Транскрипция</span>
+
+                <!-- Status Steps -->
+                <div class="status-steps">
+                    <div id="step-download" class="status-step">
+                        <span class="step-icon">⏳</span>
+                        <span class="step-text">Подготовка</span>
+                    </div>
+                    <div id="step-transcription" class="status-step">
+                        <span class="step-icon">⏳</span>
+                        <span class="step-text">Транскрипция</span>
+                    </div>
+                    <div id="step-diarization" class="status-step">
+                        <span class="step-icon">⏳</span>
+                        <span class="step-text">Диаризация</span>
+                    </div>
+                    <div id="step-summarization" class="status-step">
+                        <span class="step-icon">⏳</span>
+                        <span class="step-text">Создание документа</span>
+                    </div>
                 </div>
-                <div class="stage" id="stage-diarization">
-                    <span class="stage-icon">⏳</span>
-                    <span class="stage-text">Диаризация</span>
-                </div>
-                <div class="stage" id="stage-summarization">
-                    <span class="stage-icon">⏳</span>
-                    <span class="stage-text">Суммаризация</span>
+
+                <!-- Logs -->
+                <div class="logs-section">
+                    <div class="logs-title">Журнал обработки</div>
+                    <div id="logs-container" class="logs-container"></div>
                 </div>
             </div>
-            <div class="logs-container">
-                <h4>Логи обработки:</h4>
-                <div class="logs" id="logs"></div>
+
+            <!-- Results Section -->
+            <div id="results-section" class="results-section hidden">
+                <h3>✅ Обработка завершена</h3>
+                
+                <!-- Stats -->
+                <div class="result-stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Сегментов обработано</div>
+                        <div class="stat-value" id="stat-segments">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Спикеров определено</div>
+                        <div class="stat-value" id="stat-speakers">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Время обработки</div>
+                        <div class="stat-value" id="stat-time">0 мин</div>
+                    </div>
+                </div>
+
+                <!-- Download Buttons -->
+                <div class="download-buttons">
+                    <a id="download-summary" class="download-btn" href="#" target="_blank">
+                        📄 Скачать краткое содержание
+                    </a>
+                    <a id="download-transcription" class="download-btn" href="#" target="_blank">
+                        📝 Скачать полную расшифровку
+                    </a>
+                </div>
+            </div>
+
+            <!-- Error Section -->
+            <div id="error-section" class="error-section hidden">
+                <div class="error-title">Ошибка</div>
+                <div id="error-message" class="error-message"></div>
             </div>
         </div>
-        <div id="results" class="results hidden">
-            <h3>Результаты обработки</h3>
-            <div class="result-stats" id="result-stats"></div>
-            <div class="result-links">
-                <a id="summary-link" class="result-link hidden" target="_blank">
-                    📄 Скачать краткое содержание
-                </a>
-                <a id="transcription-link" class="result-link hidden" target="_blank">
-                    📝 Скачать полную расшифровку
-                </a>
-            </div>
-        </div>
-        <div id="error" class="error hidden"></div>
     </div>
+
     <script src="/static/script.js"></script>
 </body>
-
 </html>

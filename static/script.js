@@ -1,37 +1,81 @@
-let currentTaskId = null;
-let progressInterval = null;
+// Упрощенный и читаемый JavaScript для управления UI
 
-function openTab(tabName) {
-    // Скрыть все табы
+let currentTaskId = null;
+let progressCheckInterval = null;
+
+// ==================== Переключение табов ====================
+
+function switchTab(tabName) {
+    // Скрываем все табы
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
-    // Убрать активный класс у всех кнопок
+    
+    // Убираем активный класс у кнопок
     document.querySelectorAll('.tab-button').forEach(button => {
         button.classList.remove('active');
     });
-    // Показать выбранный таб
-    document.getElementById(tabName).classList.add('active');
-    event.currentTarget.classList.add('active');
+    
+    // Показываем выбранный таб
+    if (tabName === 'file') {
+        document.getElementById('file-tab').classList.add('active');
+        event.target.classList.add('active');
+    } else {
+        document.getElementById('url-tab').classList.add('active');
+        event.target.classList.add('active');
+    }
 }
 
-async function processVideo() {
+// ==================== Обработка файлов ====================
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function showFileInfo(file) {
+    const fileInfo = document.getElementById('file-info');
+    const fileExt = file.name.split('.').pop().toLowerCase();
+    const audioFormats = ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg'];
+    const fileType = audioFormats.includes(fileExt) ? 'Аудио' : 'Видео';
+    
+    fileInfo.innerHTML = `
+        <div class="file-info-row">
+            <span class="file-info-label">Тип:</span>
+            <span class="file-info-value">${fileType}</span>
+        </div>
+        <div class="file-info-row">
+            <span class="file-info-label">Имя файла:</span>
+            <span class="file-info-value">${file.name}</span>
+        </div>
+        <div class="file-info-row">
+            <span class="file-info-label">Размер:</span>
+            <span class="file-info-value">${formatFileSize(file.size)}</span>
+        </div>
+    `;
+    fileInfo.classList.remove('hidden');
+}
+
+// ==================== Начало обработки ====================
+
+async function startProcessing() {
     const fileInput = document.getElementById('file-input');
     const urlInput = document.getElementById('url-input');
-    const summaryTypeSelect = document.getElementById('summary-type');
+    const summaryType = document.getElementById('summary-type').value;
     const processBtn = document.getElementById('process-btn');
-    const progress = document.getElementById('progress');
-    const results = document.getElementById('results');
-    const error = document.getElementById('error');
-
-    // Сброс состояний
-    error.classList.add('hidden');
-    results.classList.add('hidden');
+    
+    // Сброс предыдущих результатов
+    hideError();
+    hideResults();
     resetProgress();
-
+    
+    // Проверка входных данных
     const formData = new FormData();
     let hasInput = false;
-
+    
     if (fileInput.files.length > 0) {
         formData.append('file', fileInput.files[0]);
         hasInput = true;
@@ -39,265 +83,258 @@ async function processVideo() {
         formData.append('url', urlInput.value.trim());
         hasInput = true;
     }
-    formData.append('summary_type', summaryTypeSelect.value);
-
+    
     if (!hasInput) {
         showError('Пожалуйста, выберите файл или укажите ссылку');
         return;
     }
-
-    // Показать прогресс
-    progress.classList.remove('hidden');
+    
+    formData.append('summary_type', summaryType);
+    
+    // Показываем прогресс и блокируем кнопку
+    showProgress();
     processBtn.disabled = true;
-
+    
     try {
         const response = await fetch('/process', {
             method: 'POST',
             body: formData
         });
-
+        
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.detail || 'Ошибка сервера');
         }
-
+        
         const data = await response.json();
         currentTaskId = data.task_id;
-
-        // Начать отслеживание прогресса
-        startProgressTracking(currentTaskId);
-    } catch (err) {
-        showError(err.message);
-        progress.classList.add('hidden');
+        
+        // Запускаем отслеживание прогресса
+        startProgressTracking();
+        
+    } catch (error) {
+        showError(error.message);
+        hideProgress();
         processBtn.disabled = false;
     }
 }
 
-function startProgressTracking(taskId) {
-    if (progressInterval) {
-        clearInterval(progressInterval);
+// ==================== Отслеживание прогресса ====================
+
+function startProgressTracking() {
+    if (progressCheckInterval) {
+        clearInterval(progressCheckInterval);
     }
-
-    progressInterval = setInterval(async () => {
+    
+    // Проверяем прогресс каждые 2 секунды
+    progressCheckInterval = setInterval(async () => {
         try {
-            const response = await fetch(`/progress/${taskId}`);
+            const response = await fetch(`/progress/${currentTaskId}`);
             if (!response.ok) return;
-
-            const progressData = await response.json();
-            updateProgress(progressData);
-
-            // Если задача завершена
-            if (progressData.status === 'completed' || progressData.status === 'error') {
-                clearInterval(progressInterval);
-
-                if (progressData.status === 'completed') {
-                    showResults(progressData);
-                } else {
-                    showError(progressData.error || 'Произошла ошибка при обработке');
-                }
-
+            
+            const data = await response.json();
+            updateProgressDisplay(data);
+            
+            // Если обработка завершена
+            if (data.status === 'completed') {
+                clearInterval(progressCheckInterval);
+                hideProgress();
+                showResults(data);
+                document.getElementById('process-btn').disabled = false;
+            } else if (data.status === 'error') {
+                clearInterval(progressCheckInterval);
+                hideProgress();
+                showError(data.error || 'Произошла ошибка при обработке');
                 document.getElementById('process-btn').disabled = false;
             }
+            
         } catch (error) {
-            console.error('Ошибка при запросе прогресса:', error);
+            console.error('Ошибка при проверке прогресса:', error);
         }
-    }, 2000); // Опрашиваем каждые 2 секунды
+    }, 2000);
 }
 
-function updateProgress(progressData) {
+// ==================== Обновление UI прогресса ====================
+
+function updateProgressDisplay(data) {
+    const percent = data.percent || 0;
+    
     // Обновляем прогресс-бар
-    const progressFill = document.getElementById('progress-fill');
-    const progressText = document.getElementById('progress-text');
-    const percent = progressData.percent || 0;
-    progressFill.style.width = `${percent}%`;
-    progressText.textContent = `${percent}%`;
-
-    // Обновляем стадии
-    updateStages(progressData.current_stage);
-
+    document.getElementById('progress-bar-fill').style.width = percent + '%';
+    document.getElementById('progress-percentage').textContent = percent + '%';
+    
+    // Обновляем этапы
+    updateSteps(data.current_stage);
+    
     // Обновляем логи
-    updateLogs(progressData.logs || []);
+    updateLogs(data.logs || []);
 }
 
-function updateStages(currentStage) {
-    const stages = {
-        'download': 'stage-download',
-        'preprocessing': 'stage-download',
-        'audio_extraction': 'stage-download',
-        'transcription': 'stage-transcription',
-        'diarization': 'stage-diarization',
-        'merging': 'stage-diarization',
-        'summarization': 'stage-summarization',
-        'formatting': 'stage-summarization',
-        'saving': 'stage-summarization'
+function updateSteps(currentStage) {
+    const stageMapping = {
+        'download': 'step-download',
+        'preprocessing': 'step-download',
+        'audio_extraction': 'step-download',
+        'transcription': 'step-transcription',
+        'loading_models': 'step-transcription',
+        'diarization': 'step-diarization',
+        'merging': 'step-diarization',
+        'summarization': 'step-summarization',
+        'saving': 'step-summarization'
     };
-
-    // Сброс всех стадий
-    Object.values(stages).forEach(stageId => {
-        const stage = document.getElementById(stageId);
-        stage.classList.remove('active', 'completed');
-        stage.querySelector('.stage-icon').textContent = '⏳';
+    
+    const currentStepId = stageMapping[currentStage];
+    
+    // Сбрасываем все шаги
+    document.querySelectorAll('.status-step').forEach(step => {
+        step.classList.remove('active', 'completed');
+        step.querySelector('.step-icon').textContent = '⏳';
     });
-
-    // Активация текущих и завершенных стадий
+    
+    // Отмечаем завершенные и текущий этап
+    const steps = ['step-download', 'step-transcription', 'step-diarization', 'step-summarization'];
     let foundCurrent = false;
-    for (const [stageName, stageId] of Object.entries(stages)) {
-        const stage = document.getElementById(stageId);
-        if (!foundCurrent) {
-            stage.classList.add('completed');
-            stage.querySelector('.stage-icon').textContent = '✅';
-        }
-        if (stageName === currentStage) {
-            stage.classList.add('active');
-            stage.querySelector('.stage-icon').textContent = '🔄';
+    
+    for (const stepId of steps) {
+        const step = document.getElementById(stepId);
+        
+        if (stepId === currentStepId) {
+            step.classList.add('active');
+            step.querySelector('.step-icon').textContent = '⚙️';
             foundCurrent = true;
+        } else if (!foundCurrent) {
+            step.classList.add('completed');
+            step.querySelector('.step-icon').textContent = '✅';
         }
     }
 }
 
 function updateLogs(logs) {
-    const logsContainer = document.getElementById('logs');
+    const logsContainer = document.getElementById('logs-container');
     logsContainer.innerHTML = '';
-
-    // Показываем только последние 10 логов
+    
+    // Показываем последние 10 логов
     const recentLogs = logs.slice(-10);
+    
     recentLogs.forEach(log => {
         const logEntry = document.createElement('div');
         logEntry.className = 'log-entry';
-
-        // Извлекаем время и сообщение из лога
-        const logMatch = log.match(/\[(.*?)\]\s*(.*)/);
-        if (logMatch) {
-            const timestamp = logMatch[1];
-            const message = logMatch[2];
+        
+        // Парсим лог: [время] сообщение
+        const match = log.match(/\[(.*?)\]\s*(.*)/);
+        if (match) {
             logEntry.innerHTML = `
-                <span class="log-time">[${timestamp}]</span>
-                <span class="log-message">${message}</span>
+                <span class="log-time">[${match[1]}]</span>
+                <span class="log-message">${match[2]}</span>
             `;
         } else {
             logEntry.innerHTML = `<span class="log-message">${log}</span>`;
         }
+        
         logsContainer.appendChild(logEntry);
     });
-
+    
     // Автоскролл к последнему логу
     logsContainer.scrollTop = logsContainer.scrollHeight;
 }
 
-function resetProgress() {
-    const progressFill = document.getElementById('progress-fill');
-    const progressText = document.getElementById('progress-text');
-    const logsContainer = document.getElementById('logs');
-
-    progressFill.style.width = '0%';
-    progressText.textContent = '0%';
-    logsContainer.innerHTML = '';
-
-    // Сброс стадий
-    document.querySelectorAll('.stage').forEach(stage => {
-        stage.classList.remove('active', 'completed');
-        stage.querySelector('.stage-icon').textContent = '⏳';
-    });
-}
+// ==================== Отображение результатов ====================
 
 function showResults(data) {
-    const results = document.getElementById('results');
-    const resultStats = document.getElementById('result-stats');
-    const summaryLink = document.getElementById('summary-link');
-    const transcriptionLink = document.getElementById('transcription-link');
-    const progress = document.getElementById('progress');
-
-    // Обновляем статистику
     const resultData = data.result || data;
-    resultStats.innerHTML = `
-        <div class="stat-item">
-            <span class="stat-label">Обработано сегментов:</span>
-            <span class="stat-value">${resultData.segments_count || 0}</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-label">Обнаружено спикеров:</span>
-            <span class="stat-value">${resultData.speakers_count || 0}</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-label">Время обработки:</span>
-            <span class="stat-value">${resultData.processing_time_minutes || 0} мин.</span>
-        </div>
-    `;
-
-    // Обновляем ссылки для скачивания
-    summaryLink.href = `/download/${resultData.task_id}/summary`;
-    transcriptionLink.href = `/download/${resultData.task_id}/transcription`;
-
-    // Показываем кнопки скачивания
-    summaryLink.classList.remove('hidden');
-    transcriptionLink.classList.remove('hidden');
-
+    
+    // Обновляем статистику
+    document.getElementById('stat-segments').textContent = resultData.segments_count || 0;
+    document.getElementById('stat-speakers').textContent = resultData.speakers_count || 0;
+    document.getElementById('stat-time').textContent = (resultData.processing_time_minutes || 0) + ' мин';
+    
+    // Устанавливаем ссылки для скачивания
+    const taskId = resultData.task_id || currentTaskId;
+    document.getElementById('download-summary').href = `/download/${taskId}/summary`;
+    document.getElementById('download-transcription').href = `/download/${taskId}/transcription`;
+    
     // Показываем результаты
-    progress.classList.add('hidden');
-    results.classList.remove('hidden');
+    document.getElementById('results-section').classList.remove('hidden');
 }
 
-function showError(message) {
-    const errorDiv = document.getElementById('error');
-    errorDiv.textContent = message;
-    errorDiv.classList.remove('hidden');
+function hideResults() {
+    document.getElementById('results-section').classList.add('hidden');
+}
 
+// ==================== Обработка ошибок ====================
+
+function showError(message) {
+    document.getElementById('error-message').textContent = message;
+    document.getElementById('error-section').classList.remove('hidden');
+    
     // Останавливаем отслеживание прогресса
-    if (progressInterval) {
-        clearInterval(progressInterval);
-        progressInterval = null;
+    if (progressCheckInterval) {
+        clearInterval(progressCheckInterval);
+        progressCheckInterval = null;
     }
 }
 
-// Обработчик drag and drop для файлов
-document.addEventListener('DOMContentLoaded', function () {
-    const fileLabel = document.querySelector('.file-label');
+function hideError() {
+    document.getElementById('error-section').classList.add('hidden');
+}
+
+// ==================== Управление прогрессом ====================
+
+function showProgress() {
+    document.getElementById('progress-section').classList.remove('hidden');
+}
+
+function hideProgress() {
+    document.getElementById('progress-section').classList.add('hidden');
+}
+
+function resetProgress() {
+    document.getElementById('progress-bar-fill').style.width = '0%';
+    document.getElementById('progress-percentage').textContent = '0%';
+    document.getElementById('logs-container').innerHTML = '';
+    
+    // Сброс всех этапов
+    document.querySelectorAll('.status-step').forEach(step => {
+        step.classList.remove('active', 'completed');
+        step.querySelector('.step-icon').textContent = '⏳';
+    });
+}
+
+// ==================== Инициализация при загрузке ====================
+
+document.addEventListener('DOMContentLoaded', function() {
     const fileInput = document.getElementById('file-input');
-    const fileInfo = document.getElementById('file-info');
-
-    fileLabel.addEventListener('dragover', function (e) {
-        e.preventDefault();
-        this.style.borderColor = '#007bff';
-        this.style.background = '#f8f9ff';
+    const fileUploadZone = document.getElementById('file-upload-zone');
+    
+    // Обработка выбора файла
+    fileInput.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            showFileInfo(this.files[0]);
+        }
     });
-
-    fileLabel.addEventListener('dragleave', function (e) {
+    
+    // Drag and Drop
+    fileUploadZone.addEventListener('dragover', function(e) {
         e.preventDefault();
-        this.style.borderColor = '#dee2e6';
-        this.style.background = '';
+        e.stopPropagation();
+        this.classList.add('dragging');
     });
-
-    fileLabel.addEventListener('drop', function (e) {
+    
+    fileUploadZone.addEventListener('dragleave', function(e) {
         e.preventDefault();
+        e.stopPropagation();
+        this.classList.remove('dragging');
+    });
+    
+    fileUploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.classList.remove('dragging');
+        
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             fileInput.files = files;
-            updateFileInfo(files[0]);
+            showFileInfo(files[0]);
         }
     });
-
-    fileInput.addEventListener('change', function () {
-        if (this.files.length > 0) {
-            updateFileInfo(this.files[0]);
-        }
-    });
-
-    function updateFileInfo(file) {
-        const fileExt = file.name.split('.').pop().toLowerCase();
-        const isAudio = ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg'].includes(fileExt);
-        const fileType = isAudio ? 'Аудио' : 'Видео';
-        fileInfo.innerHTML = `
-            <div class="file-type">Тип: ${fileType}</div>
-            <div class="file-name">Файл: ${file.name}</div>
-            <div class="file-size">Размер: ${formatFileSize(file.size)}</div>
-        `;
-    }
-
-    function formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
 });

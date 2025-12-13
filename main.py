@@ -102,6 +102,12 @@ logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.get("/")
+async def index():
+    """Главная страница"""
+    return FileResponse("static/index.html")
+
+
 @app.get("/memory-status")
 async def memory_status():
     """Проверка использования памяти"""
@@ -110,11 +116,11 @@ async def memory_status():
             raise HTTPException(500, "Processor not initialized")
 
         gpu_info = processor.get_gpu_memory_info()
-        system_info = processor.get_system_memory_info()
+        system_info = processor.get_system_info()
 
         return {
             "gpu_memory": gpu_info,
-            "system_memory": system_info,
+            "system_info": system_info,
             "current_loaded_model": processor.current_loaded_model,
         }
     except Exception as e:
@@ -123,30 +129,22 @@ async def memory_status():
 
 @app.get("/model-status")
 async def model_status():
+    """Статус загруженных AI моделей"""
     try:
         if not processor:
             raise HTTPException(500, "Processor not initialized")
 
-        models_info = {
-            "whisper_loaded": processor.whisper_model is not None,
-            "whisper_model_size": getattr(processor, "whisper_model_size", "medium"),
-            "diarization_loaded": processor.diarization_pipeline is not None,
-            "qwen_loaded": processor.qwen_model is not None,
-            "current_loaded_model": processor.current_loaded_model,
-            "qwen_quantization": "4-bit",
+        # Получаем информацию о моделях через новый API
+        models_info = {}
+        if hasattr(processor, 'model_manager'):
+            models_info = processor.model_manager.get_loaded_models_info()
+        
+        system_info = processor.get_system_info()
+
+        return {
+            "models": models_info,
+            "system": system_info
         }
-
-        if torch.cuda.is_available():
-            gpu_info = {
-                "gpu_available": True,
-                "gpu_name": torch.cuda.get_device_name(0),
-                "gpu_memory": torch.cuda.get_device_properties(0).total_memory
-                / 1024**3,
-            }
-        else:
-            gpu_info = {"gpu_available": False}
-
-        return {"models": models_info, "gpu": gpu_info}
     except Exception as e:
         return {"error": str(e)}
 
