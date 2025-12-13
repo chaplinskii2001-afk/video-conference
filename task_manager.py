@@ -3,6 +3,7 @@ import uuid
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 import logging
+from processing.stages import get_display_stage
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ class TaskManager:
         self.tasks[task_id] = {
             "status": "created",  # created -> processing -> completed -> error
             "percent": 0,
-            "current_stage": "waiting",
+            "current_stage": "initialization",
+            "current_stage_display": get_display_stage("initialization"),
             "logs": [],
             "start_time": self._get_tomsk_time(),
             "result": None,
@@ -44,6 +46,7 @@ class TaskManager:
 
         self.tasks[task_id]["percent"] = percent
         self.tasks[task_id]["current_stage"] = stage
+        self.tasks[task_id]["current_stage_display"] = get_display_stage(stage)
         self.tasks[task_id]["status"] = "processing"
 
         if log_message:
@@ -68,6 +71,7 @@ class TaskManager:
                 "status": "completed",
                 "percent": 100,
                 "current_stage": "completed",
+                "current_stage_display": get_display_stage("completed"),
                 "result": result,
                 "end_time": self._get_tomsk_time(),
             }

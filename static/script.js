@@ -163,26 +163,68 @@ function updateProgressDisplay(data) {
     document.getElementById('progress-bar-fill').style.width = percent + '%';
     document.getElementById('progress-percentage').textContent = percent + '%';
     
-    // Обновляем текущий этап
-    updateCurrentStage(data.current_stage);
+    // Обновляем текущий этап с информацией от сервера
+    if (data.current_stage_display) {
+        updateCurrentStage(data.current_stage_display);
+    } else {
+        // Fallback для старых ответов сервера
+        updateCurrentStageFallback(data.current_stage);
+    }
 }
 
-function updateCurrentStage(stage) {
-    // Преобразуем stage в понятное название
+function updateCurrentStage(stageDisplay) {
+    // Используем информацию из API сервера
+    if (!stageDisplay || typeof stageDisplay !== 'object') {
+        return;
+    }
+    
+    const stageName = stageDisplay.display_name || 'Обработка';
+    const stageDescription = stageDisplay.description || '';
+    const stageIcon = stageDisplay.icon || '⏳';
+    
+    document.getElementById('current-stage-name').textContent = stageName;
+    document.getElementById('stage-description').textContent = stageDescription;
+    document.getElementById('stage-icon').textContent = stageIcon;
+}
+
+function updateCurrentStageFallback(stage) {
+    // Преобразуем stage в понятное название (для совместимости)
     const stageNames = {
-        'download': 'Подготовка',
-        'preprocessing': 'Подготовка',
-        'audio_extraction': 'Подготовка',
-        'transcription': 'Транскрипция',
-        'loading_models': 'Транскрипция',
-        'diarization': 'Диаризация',
-        'merging': 'Диаризация',
+        'initialization': 'Начало обработки',
+        'download': 'Подготовка файла',
+        'preprocessing': 'Подготовка файла',
+        'audio_extraction': 'Извлечение аудио',
+        'audio_conversion': 'Конвертация аудио',
+        'loading_models': 'Загрузка моделей',
+        'transcription': 'Транскрипция речи',
+        'diarization': 'Определение спикеров',
+        'merging': 'Объединение результатов',
         'summarization': 'Создание документа',
-        'saving': 'Создание документа'
+        'saving': 'Сохранение результатов',
+        'completed': 'Обработка завершена'
+    };
+    
+    const stageIcons = {
+        'initialization': '🚀',
+        'download': '📥',
+        'preprocessing': '⚙️',
+        'audio_extraction': '🎵',
+        'audio_conversion': '🎵',
+        'loading_models': '🤖',
+        'transcription': '🎤',
+        'diarization': '👥',
+        'merging': '🔗',
+        'summarization': '📝',
+        'saving': '💾',
+        'completed': '✅'
     };
     
     const stageName = stageNames[stage] || 'Обработка';
+    const stageIcon = stageIcons[stage] || '⏳';
+    
     document.getElementById('current-stage-name').textContent = stageName;
+    document.getElementById('stage-icon').textContent = stageIcon;
+    document.getElementById('stage-description').textContent = '';
 }
 
 // ==================== Отображение результатов ====================
@@ -238,7 +280,9 @@ function hideProgress() {
 function resetProgress() {
     document.getElementById('progress-bar-fill').style.width = '0%';
     document.getElementById('progress-percentage').textContent = '0%';
-    document.getElementById('current-stage-name').textContent = 'Подготовка';
+    document.getElementById('current-stage-name').textContent = 'Начало обработки задачи';
+    document.getElementById('stage-description').textContent = 'Инициализация системы';
+    document.getElementById('stage-icon').textContent = '🚀';
 }
 
 // ==================== Инициализация при загрузке ====================
