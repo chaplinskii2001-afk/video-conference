@@ -12,11 +12,50 @@ import torchaudio
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 import yt_dlp
+from transformers import StoppingCriteria, StoppingCriteriaList
 
 # Локальные модули
 from config import AppConfig, GPUConfig
 from processing.gpu_manager import GPUMemoryManager
 from processing.model_manager import ModelManager
+
+
+class StopOnTokenSequence(StoppingCriteria):
+    def __init__(
+        self,
+        stop_token_ids: List[int],
+        start_length: int,
+        max_trailing_tokens: int = 5,
+    ):
+        self.stop_token_ids = stop_token_ids
+        self.start_length = start_length
+        self.max_trailing_tokens = max_trailing_tokens
+
+    def __call__(
+        self,
+        input_ids: torch.LongTensor,
+        scores: torch.FloatTensor,
+        **kwargs,
+    ) -> bool:
+        if input_ids.shape[0] != 1:
+            return False
+
+        if input_ids.shape[1] < self.start_length + len(self.stop_token_ids):
+            return False
+
+        window_size = len(self.stop_token_ids) + self.max_trailing_tokens
+        tail_window = input_ids[0, -window_size:].tolist()
+
+        for trailing in range(0, min(self.max_trailing_tokens, len(tail_window) - len(self.stop_token_ids)) + 1):
+            if trailing == 0:
+                candidate = tail_window[-len(self.stop_token_ids) :]
+            else:
+                candidate = tail_window[-len(self.stop_token_ids) - trailing : -trailing]
+
+            if candidate == self.stop_token_ids:
+                return True
+
+        return False
 
 
 class VideoProcessor:
@@ -338,7 +377,55 @@ class VideoProcessor:
         return aligned
     
     # ==================== СУММАРИЗАЦИЯ ====================
-    
+
+    def _trim_to_word_boundary(self, text: str) -> str:
+        text = text.rstrip()
+        if not text:
+            return text
+
+        if re.search(r"[0-9A-Za-zА-Яа-яЁё]$", text):
+            m = re.search(r"\s+\S+$", text)
+            if m:
+                text = text[: m.start()].rstrip()
+
+        return text
+
+    def _postprocess_summary(
+        self,
+        text: str,
+        *,
+        summary_type: str,
+        stop_marker: str,
+        hit_token_limit: bool,
+    ) -> str:
+        if not text:
+            return ""
+
+        if stop_marker in text:
+            text = text.split(stop_marker, 1)[0]
+
+        text = re.sub(r"(?mi)^\s*getStatusCode\(\)\s*$", "", text)
+        text = re.sub(r"(?is)\bWrite a short summary of the meeting.*", "", text)
+
+        if summary_type == "protocol":
+            text = re.sub(
+                r"(?s)\A\s*Дата проведения:\s*(?:\r?\n)\s*Присутствуют:\s*(?:\r?\n)\s*Повестка дня:\s*(?:\r?\n)\s*Рассмотрены вопросы и решения:\s*(?:\r?\n)\s*Итоги:\s*(?:\r?\n)+",
+                "",
+                text,
+                count=1,
+            )
+
+        text = text.replace("**", "")
+        text = re.sub(r"(?m)^\s*#{1,6}\s*", "", text)
+        text = re.sub(r"(?m)^\s*-{3,}\s*$", "", text)
+
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+        if hit_token_limit:
+            text = self._trim_to_word_boundary(text)
+
+        return text.strip()
+
     def split_text_into_chunks(self, text: str, max_chars: int = 14000) -> List[str]:
         """
         Разбивает длинный текст на части для обработки
@@ -378,70 +465,99 @@ class VideoProcessor:
         return chunks
     
     async def summarize_chunk(
-        self, 
-        text: str, 
+        self,
+        text: str,
         summary_type: str = "standard",
-        max_tokens: int = 800
+        max_tokens: int = 800,
     ) -> str:
+        """Суммаризация одного чанка текста.
+
+        Текущее исправление проблем суммаризации:
+        - Возвращаем корректную остановку генерации (eos_token_id), чтобы модель не
+          генерировала принудительно до max_new_tokens (это вызывало мусор и обрезание).
+        - Добавляем строгий stop-marker + stopping_criteria, чтобы гарантированно
+          остановиться в конце документа и не дописывать лишнее (например getStatusCode()).
+        - Постобработка: убираем stop-marker/мусор и, если достигнут лимит токенов,
+          обрезаем до границы слова.
         """
-        Суммаризация одного чанка текста
-        
-        Исправления обрезания суммаризации (версия 3):
-        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
-          Блокирует EOS token и гарантирует генерацию до max_new_tokens
-        - max_length при токенизации: 12000 → 24000 (больше контекста)
-        - Логирование input/output токенов для диагностики
-        """
-        # Шаблоны для разных типов суммаризации
+
+        stop_marker = "<<<END_OF_PROTOCOL>>>" if summary_type == "protocol" else "<<<END_OF_SUMMARY>>>"
+
         if summary_type == "standard":
-            system_message = """Ты - секретарь, оформляющий протокол видео на русском языке. 
-Используй следующий шаблон:
+            system_message = f"""Ты — секретарь, который делает краткое содержание видео на русском языке.
 
-Общая тематика видео:
+Сформируй краткое содержание СТРОГО по структуре ниже. Выводи ТОЛЬКО заполненную структуру (без комментариев/пояснений).
+
+Структура:
+Общая тематика видео: <...>
 Основные темы:
+1) <...>
+2) <...>
 Ключевые тезисы:
+— <...>
 Итоги:
+— <...>
 
-Требования:
-1. Строго придерживайся структуры шаблона
-2. Выводи только пункты из шаблона
-3. Абсолютная грамотность
-4. Используй только русский язык"""
-        else:  # protocol
-            system_message = """Ты - секретарь, оформляющий протокол конференции. 
-Шаблон:
+Жёсткие требования:
+- Только русский язык.
+- Не используй markdown (запрещены символы '#', '*', '`', '_').
+- Не добавляй приветствия, вводные фразы, пояснения.
+- В конце выведи отдельной строкой: {stop_marker}"""
+        else:
+            system_message = f"""Ты — секретарь, оформляющий протокол совещания/конференции на русском языке.
 
-Дата проведения:
-Присутствуют:
+Составь протокол СТРОГО по шаблону ниже. Выводи ТОЛЬКО заполненный шаблон (без пустого шаблона, без дублей, без комментариев).
+
+Шаблон (порядок обязателен):
+Дата проведения: <...>
+Присутствуют: <...>
 Повестка дня:
+1) <...>
+2) <...>
 Рассмотрены вопросы и решения:
+— <вопрос/обсуждение> — <решение/действие>
 Итоги:
+— <...>
 
-Требования:
-1. Строго придерживайся шаблона
-2. Только русский язык"""
-        
+Жёсткие требования:
+- Только русский язык.
+- Запрещены markdown и оформление (нельзя '#', '###', '**', '---').
+- Никаких дополнительных разделов/абзацев вне шаблона.
+- В конце выведи отдельной строкой: {stop_marker}"""
+
         messages = [
             {"role": "system", "content": system_message},
-            {"role": "user", "content": f"Проанализируй текст и создай содержание:\n{text}"}
+            {"role": "user", "content": f"Текст для анализа (не цитируй его в ответе):\n{text}"},
         ]
-        
+
         prompt = self.model_manager.qwen_tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=True,
         )
-        
+
         inputs = self.model_manager.qwen_tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=24000
+            max_length=24000,
         ).to(self.model_manager.qwen_model.device)
-        
+
         input_length = len(inputs.input_ids[0])
         self.logger.info(f"Суммаризация чанка: input_tokens={input_length}, max_new_tokens={max_tokens}")
-        
+
+        stop_token_ids = self.model_manager.qwen_tokenizer.encode(stop_marker, add_special_tokens=False)
+        stop_token_ids_nl = self.model_manager.qwen_tokenizer.encode("\n" + stop_marker, add_special_tokens=False)
+        stop_criteria_items = [StopOnTokenSequence(stop_token_ids, start_length=input_length)]
+        if stop_token_ids_nl and stop_token_ids_nl != stop_token_ids:
+            stop_criteria_items.append(StopOnTokenSequence(stop_token_ids_nl, start_length=input_length))
+        stopping_criteria = StoppingCriteriaList(stop_criteria_items)
+
+        eos_token_id = self.model_manager.qwen_tokenizer.eos_token_id
+        pad_token_id = self.model_manager.qwen_tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = eos_token_id
+
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
@@ -449,81 +565,137 @@ class VideoProcessor:
                 do_sample=False,
                 num_beams=1,
                 repetition_penalty=1.05,
-                eos_token_id=None,
-                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+                stopping_criteria=stopping_criteria,
             )
-        
+
         generated_ids = outputs[0][input_length:].tolist()
-        self.logger.info(f"Суммаризация чанка: сгенерировано {len(generated_ids)} токенов (лимит {max_tokens})")
-        
-        summary = self.model_manager.qwen_tokenizer.decode(
-            generated_ids,
-            skip_special_tokens=True
-        ).strip()
-        
+        hit_token_limit = len(generated_ids) >= max_tokens
+        self.logger.info(
+            f"Суммаризация чанка: сгенерировано {len(generated_ids)} токенов (лимит {max_tokens}, достигнут={hit_token_limit})"
+        )
+
+        raw_text = self.model_manager.qwen_tokenizer.decode(generated_ids, skip_special_tokens=True)
+        summary = self._postprocess_summary(raw_text, summary_type=summary_type, stop_marker=stop_marker, hit_token_limit=hit_token_limit)
+
         return summary
     
     async def merge_summaries(
         self,
         summaries: List[str],
-        summary_type: str = "standard"
+        summary_type: str = "standard",
     ) -> str:
+        """Объединение нескольких суммаризаций в один итоговый документ.
+
+        Ключевые моменты:
+        - Генерация должна останавливаться корректно (EOS/stop-marker), иначе модель
+          начинает дописывать «мусор» (в т.ч. getStatusCode()).
+        - Используем тот же stop-marker, что и для summarize_chunk, и затем
+          постобрабатываем результат.
         """
-        Объединение нескольких суммаризаций в одну
-        
-        Исправления обрезания суммаризации (версия 3):
-        - eos_token_id=None: КРИТИЧЕСКИЙ параметр для предотвращения обрезания
-          Блокирует EOS token и гарантирует генерацию до max_new_tokens
-        - max_length при токенизации: 24000 → 32000 (больше контекста)
-        - Логирование input/output токенов для диагностики
-        """
+
+        stop_marker = "<<<END_OF_PROTOCOL>>>" if summary_type == "protocol" else "<<<END_OF_SUMMARY>>>"
+
         if summary_type == "standard":
-            system_message = "Объедини суммаризации в ЕДИНЫЙ структурированный документ. Убери дубликаты."
+            system_message = f"""Ты — секретарь. Объедини несколько кратких содержаний в ОДНО итоговое краткое содержание.
+
+Выводи результат СТРОГО по структуре:
+Общая тематика видео: <...>
+Основные темы:
+1) <...>
+2) <...>
+Ключевые тезисы:
+— <...>
+Итоги:
+— <...>
+
+Требования:
+- Только русский язык.
+- Не используй markdown (запрещены '#', '*', '`', '_').
+- Не добавляй никаких дополнительных разделов/пояснений.
+- В конце выведи отдельной строкой: {stop_marker}"""
         else:
-            system_message = "Объедини протоколы в ЕДИНЫЙ протокол конференции. Объедини списки присутствующих и вопросы."
-        
+            system_message = f"""Ты — секретарь. Объедини несколько протоколов частей в ОДИН единый протокол.
+
+Выводи результат СТРОГО по шаблону (порядок обязателен):
+Дата проведения: <...>
+Присутствуют: <...>
+Повестка дня:
+1) <...>
+2) <...>
+Рассмотрены вопросы и решения:
+— <вопрос/обсуждение> — <решение/действие>
+Итоги:
+— <...>
+
+Требования:
+- Только русский язык.
+- Запрещены markdown и оформление (нельзя '#', '###', '**', '---').
+- Не добавляй ничего вне шаблона.
+- В конце выведи отдельной строкой: {stop_marker}"""
+
         combined_text = "\n\n".join(summaries)
-        
+
         messages = [
             {"role": "system", "content": system_message},
-            {"role": "user", "content": f"Объедини текст:\n{combined_text}"}
+            {"role": "user", "content": f"Части для объединения (не цитируй дословно, а объедини и избавься от дублей):\n{combined_text}"},
         ]
-        
+
         prompt = self.model_manager.qwen_tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=True,
         )
-        
-        max_new_tokens = 7000
+
+        max_new_tokens = AppConfig.SUMMARY_MAX_NEW_TOKENS.get("final", 7000)
         inputs = self.model_manager.qwen_tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=32000
+            max_length=32000,
         ).to(self.model_manager.qwen_model.device)
-        
+
         input_length = len(inputs.input_ids[0])
         self.logger.info(f"Объединение суммаризаций: input_tokens={input_length}, max_new_tokens={max_new_tokens}")
-        
+
+        stop_token_ids = self.model_manager.qwen_tokenizer.encode(stop_marker, add_special_tokens=False)
+        stop_token_ids_nl = self.model_manager.qwen_tokenizer.encode("\n" + stop_marker, add_special_tokens=False)
+        stop_criteria_items = [StopOnTokenSequence(stop_token_ids, start_length=input_length)]
+        if stop_token_ids_nl and stop_token_ids_nl != stop_token_ids:
+            stop_criteria_items.append(StopOnTokenSequence(stop_token_ids_nl, start_length=input_length))
+        stopping_criteria = StoppingCriteriaList(stop_criteria_items)
+
+        eos_token_id = self.model_manager.qwen_tokenizer.eos_token_id
+        pad_token_id = self.model_manager.qwen_tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = eos_token_id
+
         with torch.no_grad():
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=False,
                 repetition_penalty=1.05,
-                eos_token_id=None,
-                pad_token_id=self.model_manager.qwen_tokenizer.pad_token_id,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+                stopping_criteria=stopping_criteria,
             )
-        
+
         generated_ids = outputs[0][input_length:].tolist()
-        self.logger.info(f"Объединение суммаризаций: сгенерировано {len(generated_ids)} токенов (лимит {max_new_tokens})")
-        
-        final_summary = self.model_manager.qwen_tokenizer.decode(
-            generated_ids,
-            skip_special_tokens=True
-        ).strip()
-        
+        hit_token_limit = len(generated_ids) >= max_new_tokens
+        self.logger.info(
+            f"Объединение суммаризаций: сгенерировано {len(generated_ids)} токенов (лимит {max_new_tokens}, достигнут={hit_token_limit})"
+        )
+
+        raw_text = self.model_manager.qwen_tokenizer.decode(generated_ids, skip_special_tokens=True)
+        final_summary = self._postprocess_summary(
+            raw_text,
+            summary_type=summary_type,
+            stop_marker=stop_marker,
+            hit_token_limit=hit_token_limit,
+        )
+
         return final_summary
     
     async def summarize_text(
