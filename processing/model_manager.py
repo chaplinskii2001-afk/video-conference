@@ -15,11 +15,22 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
 )
-from pyannote.audio import Pipeline
-from processing.gpu_manager import GPUMemoryManager
 
 # Подавляем предупреждения о generation flags в transformers
-warnings.filterwarnings("ignore", message=".*generation flags are not valid.*")
+warnings.filterwarnings("ignore", message=r".*generation flags are not valid.*")
+
+# Подавляем предупреждение PyAnnote о выключении TF32 (в проекте TF32 включен для ускорения)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*TensorFloat-32 \(TF32\) has been disabled.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    module=r"pyannote\.audio\.utils\.reproducibility",
+)
+
+from pyannote.audio import Pipeline
+from processing.gpu_manager import GPUMemoryManager
 
 
 class ModelManager:
@@ -235,6 +246,10 @@ class ModelManager:
             if torch.cuda.is_available():
                 self.diarization_pipeline.to(torch.device("cuda"))
                 self.logger.info("PyAnnote перенесен на GPU")
+
+                # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
             
             self.current_loaded_model = "diarization"
             self.gpu_manager.take_snapshot("after_diarization")
