@@ -49,8 +49,16 @@ class ModelManager:
         # Получаем конфигурацию GPU
         self.gpu_config = config.get("gpu_config", {})
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        
+
+        self.whisper_batch_size = int(self.gpu_config.get("batch_size", 1) or 1)
+        self.max_audio_length_minutes = self.gpu_config.get("max_audio_length_minutes")
+
         self.logger.info(f"ModelManager инициализирован для устройства: {self.device}")
+        self.logger.info(
+            "Параметры профиля: "
+            f"batch_size={self.whisper_batch_size}, "
+            f"max_audio_length_minutes={self.max_audio_length_minutes}"
+        )
     
     # ==================== WHISPER ====================
     
@@ -105,7 +113,20 @@ class ModelManager:
             # Создаем pipeline
             chunk_length = self.gpu_config.get("chunk_length_s", 30)
             stride_length = self.gpu_config.get("stride_length_s", (4, 2))
-            
+            batch_size = int(self.gpu_config.get("batch_size", 1) or 1)
+            max_audio_length_minutes = self.gpu_config.get("max_audio_length_minutes")
+
+            self.whisper_batch_size = batch_size
+            self.max_audio_length_minutes = max_audio_length_minutes
+
+            self.logger.info(
+                "Whisper параметры: "
+                f"chunk_length_s={chunk_length}, "
+                f"stride_length_s={stride_length}, "
+                f"batch_size={batch_size}, "
+                f"max_audio_length_minutes={max_audio_length_minutes}"
+            )
+
             self.whisper_pipeline = pipeline(
                 "automatic-speech-recognition",
                 model=model,
@@ -316,4 +337,8 @@ class ModelManager:
             "device": self.device,
             "whisper_quantization": self.gpu_config.get("whisper_quantization", "unknown"),
             "qwen_quantization": self.gpu_config.get("qwen_quantization", "unknown"),
+            "chunk_length_s": self.gpu_config.get("chunk_length_s"),
+            "stride_length_s": self.gpu_config.get("stride_length_s"),
+            "batch_size": self.whisper_batch_size,
+            "max_audio_length_minutes": self.max_audio_length_minutes,
         }
