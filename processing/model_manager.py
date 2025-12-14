@@ -5,6 +5,7 @@
 import os
 import torch
 import logging
+import warnings
 from typing import Optional, Dict
 from transformers import (
     pipeline,
@@ -16,6 +17,9 @@ from transformers import (
 )
 from pyannote.audio import Pipeline
 from processing.gpu_manager import GPUMemoryManager
+
+# Подавляем предупреждения о generation flags в transformers
+warnings.filterwarnings("ignore", message=".*generation flags are not valid.*")
 
 
 class ModelManager:
@@ -109,21 +113,21 @@ class ModelManager:
                     cache_dir=whisper_path,
                     load_in_8bit=True,
                     device_map="auto",
-                    torch_dtype=torch.float16 if self.device == "cuda:0" else torch.float32,
+                    dtype=torch.float16 if self.device == "cuda:0" else torch.float32,
                 )
             elif quantization == "float16":
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
                     cache_dir=whisper_path,
                     device_map="auto",
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             else:  # float32
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
                     cache_dir=whisper_path,
                     device_map="auto",
-                    torch_dtype=torch.float32,
+                    dtype=torch.float32,
                 )
             
             # Создаем pipeline
@@ -293,7 +297,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             elif quantization == "8bit":
                 self.qwen_model = AutoModelForCausalLM.from_pretrained(
@@ -302,7 +306,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             else:  # float16 или float32
                 dtype = torch.float16 if quantization == "float16" else torch.float32
@@ -311,7 +315,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=dtype,
+                    dtype=dtype,
                 )
             
             self.current_loaded_model = "qwen"
