@@ -562,9 +562,6 @@ class VideoProcessor:
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
-                do_sample=False,
-                num_beams=1,
-                repetition_penalty=1.05,
                 eos_token_id=eos_token_id,
                 pad_token_id=pad_token_id,
                 stopping_criteria=stopping_criteria,
@@ -675,8 +672,6 @@ class VideoProcessor:
             outputs = self.model_manager.qwen_model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
-                repetition_penalty=1.05,
                 eos_token_id=eos_token_id,
                 pad_token_id=pad_token_id,
                 stopping_criteria=stopping_criteria,

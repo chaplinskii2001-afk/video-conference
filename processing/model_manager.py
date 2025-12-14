@@ -34,6 +34,12 @@ class ModelManager:
         # Токен HuggingFace
         self.hf_token = os.getenv("HF_TOKEN")
         
+        # Включаем TF32 для лучшей производительности на современных GPU
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            self.logger.info("✅ TensorFloat-32 (TF32) включен для улучшения производительности")
+        
         # Загруженные модели
         self.whisper_model = None
         self.whisper_processor = None
@@ -109,21 +115,21 @@ class ModelManager:
                     cache_dir=whisper_path,
                     load_in_8bit=True,
                     device_map="auto",
-                    torch_dtype=torch.float16 if self.device == "cuda:0" else torch.float32,
+                    dtype=torch.float16 if self.device == "cuda:0" else torch.float32,
                 )
             elif quantization == "float16":
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
                     cache_dir=whisper_path,
                     device_map="auto",
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             else:  # float32
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
                     cache_dir=whisper_path,
                     device_map="auto",
-                    torch_dtype=torch.float32,
+                    dtype=torch.float32,
                 )
             
             # Создаем pipeline
@@ -164,8 +170,13 @@ class ModelManager:
     def _get_audio_duration_minutes(self, audio_path: str) -> Optional[float]:
         try:
             import torchaudio
-
-            info = torchaudio.info(audio_path)
+            import warnings
+            
+            # Подавляем устаревшие предупреждения torchaudio
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                info = torchaudio.info(audio_path)
+            
             sample_rate = getattr(info, "sample_rate", None)
             if not sample_rate:
                 return None
@@ -293,7 +304,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             elif quantization == "8bit":
                 self.qwen_model = AutoModelForCausalLM.from_pretrained(
@@ -302,7 +313,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                 )
             else:  # float16 или float32
                 dtype = torch.float16 if quantization == "float16" else torch.float32
@@ -311,7 +322,7 @@ class ModelManager:
                     device_map="auto",
                     trust_remote_code=True,
                     local_files_only=True,
-                    torch_dtype=dtype,
+                    dtype=dtype,
                 )
             
             self.current_loaded_model = "qwen"
