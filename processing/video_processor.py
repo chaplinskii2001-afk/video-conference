@@ -18,11 +18,20 @@ from transformers import StoppingCriteria, StoppingCriteriaList
 # Подавляем предупреждения о torchaudio deprecation (будут актуальны в версии 2.9+)
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
 # Подавляем экспериментальное предупреждение о chunking в Whisper
-warnings.filterwarnings("ignore", message=".*chunk_length_s is very experimental.*")
+warnings.filterwarnings("ignore", message=r".*chunk_length_s is very experimental.*")
 # Подавляем предупреждение о forced_decoder_ids
-warnings.filterwarnings("ignore", message=".*forced_decoder_ids.*")
+warnings.filterwarnings("ignore", message=r".*forced_decoder_ids.*")
 # Подавляем предупреждение о language detection в Whisper
-warnings.filterwarnings("ignore", message=".*multilingual Whisper will default to language detection.*")
+warnings.filterwarnings("ignore", message=r".*multilingual Whisper will default to language detection.*")
+# Подавляем предупреждение PyAnnote о выключении TF32 (мы включаем TF32 в проекте)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*TensorFloat-32 \(TF32\) has been disabled.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    module=r"pyannote\.audio\.utils\.reproducibility",
+)
 
 # Локальные модули
 from config import AppConfig, GPUConfig
@@ -309,6 +318,11 @@ class VideoProcessor:
                 waveform = waveform.to("cuda")
             
             self.logger.info(f"Аудио подготовлено: shape={waveform.shape}")
+
+            # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
             
             # Запуск диаризации
             inputs = {"waveform": waveform, "sample_rate": sample_rate}
