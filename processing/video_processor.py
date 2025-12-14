@@ -215,26 +215,6 @@ class VideoProcessor:
         self.logger.info(f"Начало транскрипции: {audio_path}")
         self.gpu_manager.take_snapshot("before_transcription")
 
-        max_audio_length_minutes = self.gpu_config.get("max_audio_length_minutes")
-        duration_minutes = None
-        if max_audio_length_minutes:
-            try:
-                info = torchaudio.info(audio_path)
-                if getattr(info, "sample_rate", None):
-                    duration_minutes = (info.num_frames / info.sample_rate) / 60
-            except Exception as e:
-                self.logger.warning(f"Не удалось определить длительность аудио: {e}")
-
-        if (
-            max_audio_length_minutes
-            and duration_minutes is not None
-            and duration_minutes > max_audio_length_minutes
-        ):
-            raise Exception(
-                "Длина аудио превышает лимит профиля: "
-                f"{duration_minutes:.1f} мин > {max_audio_length_minutes} мин"
-            )
-
         # Загружаем Whisper
         self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
         success = await self.model_manager.load_whisper()
@@ -244,17 +224,7 @@ class VideoProcessor:
         self._update_progress(50, "transcription", "Транскрипция речи...")
         
         try:
-            batch_size = getattr(
-                self.model_manager,
-                "whisper_batch_size",
-                int(self.gpu_config.get("batch_size", 1) or 1),
-            )
-
-            try:
-                result = self.model_manager.whisper_pipeline(audio_path, batch_size=batch_size)
-            except TypeError:
-                result = self.model_manager.whisper_pipeline(audio_path)
-
+            result = self.model_manager.whisper_transcribe(audio_path)
             segments = []
             
             if isinstance(result.get("chunks"), list):

@@ -50,14 +50,24 @@ class ModelManager:
         self.gpu_config = config.get("gpu_config", {})
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        self.whisper_batch_size = int(self.gpu_config.get("batch_size", 1) or 1)
-        self.max_audio_length_minutes = self.gpu_config.get("max_audio_length_minutes")
+        try:
+            self.whisper_batch_size = int(self.gpu_config["batch_size"])
+            self.max_audio_length_minutes = self.gpu_config["max_audio_length_minutes"]
+            self.whisper_chunk_length_s = self.gpu_config["chunk_length_s"]
+            self.whisper_stride_length_s = self.gpu_config["stride_length_s"]
+        except KeyError as e:
+            raise ValueError(
+                "Некорректная gpu_config: ожидаются ключи batch_size, max_audio_length_minutes, "
+                "chunk_length_s, stride_length_s"
+            ) from e
 
         self.logger.info(f"ModelManager инициализирован для устройства: {self.device}")
         self.logger.info(
             "Параметры профиля: "
             f"batch_size={self.whisper_batch_size}, "
-            f"max_audio_length_minutes={self.max_audio_length_minutes}"
+            f"max_audio_length_minutes={self.max_audio_length_minutes}, "
+            f"chunk_length_s={self.whisper_chunk_length_s}, "
+            f"stride_length_s={self.whisper_stride_length_s}"
         )
     
     # ==================== WHISPER ====================
@@ -87,12 +97,16 @@ class ModelManager:
             self.logger.info(f"Whisper квантование: {quantization}")
             
             # Загружаем процессор
-            self.whisper_processor = WhisperProcessor.from_pretrained(whisper_id)
+            self.whisper_processor = WhisperProcessor.from_pretrained(
+                whisper_id,
+                cache_dir=whisper_path,
+            )
             
             # Загружаем модель с квантованием
             if quantization == "8bit":
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
+                    cache_dir=whisper_path,
                     load_in_8bit=True,
                     device_map="auto",
                     torch_dtype=torch.float16 if self.device == "cuda:0" else torch.float32,
@@ -100,24 +114,23 @@ class ModelManager:
             elif quantization == "float16":
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
+                    cache_dir=whisper_path,
                     device_map="auto",
                     torch_dtype=torch.float16,
                 )
             else:  # float32
                 model = WhisperForConditionalGeneration.from_pretrained(
                     whisper_id,
+                    cache_dir=whisper_path,
                     device_map="auto",
                     torch_dtype=torch.float32,
                 )
             
             # Создаем pipeline
-            chunk_length = self.gpu_config.get("chunk_length_s", 30)
-            stride_length = self.gpu_config.get("stride_length_s", (4, 2))
-            batch_size = int(self.gpu_config.get("batch_size", 1) or 1)
-            max_audio_length_minutes = self.gpu_config.get("max_audio_length_minutes")
-
-            self.whisper_batch_size = batch_size
-            self.max_audio_length_minutes = max_audio_length_minutes
+            chunk_length = self.whisper_chunk_length_s
+            stride_length = self.whisper_stride_length_s
+            batch_size = self.whisper_batch_size
+            max_audio_length_minutes = self.max_audio_length_minutes
 
             self.logger.info(
                 "Whisper параметры: "
@@ -147,7 +160,46 @@ class ModelManager:
             self.logger.error(f"❌ Ошибка загрузки Whisper: {e}", exc_info=True)
             await self.gpu_manager.cleanup("deep")
             return False
-    
+
+    def _get_audio_duration_minutes(self, audio_path: str) -> Optional[float]:
+        try:
+            import torchaudio
+
+            info = torchaudio.info(audio_path)
+            sample_rate = getattr(info, "sample_rate", None)
+            if not sample_rate:
+                return None
+
+            return (info.num_frames / sample_rate) / 60
+        except Exception as e:
+            self.logger.warning(f"Не удалось определить длительность аудио: {e}")
+            return None
+
+    def _enforce_max_audio_length(self, audio_path: str) -> None:
+        if not self.max_audio_length_minutes:
+            return
+
+        duration_minutes = self._get_audio_duration_minutes(audio_path)
+        if duration_minutes is None:
+            return
+
+        if duration_minutes > self.max_audio_length_minutes:
+            raise ValueError(
+                "Длина аудио превышает лимит профиля: "
+                f"{duration_minutes:.1f} мин > {self.max_audio_length_minutes} мин"
+            )
+
+    def whisper_transcribe(self, audio_path: str) -> Dict:
+        if self.whisper_pipeline is None or self.current_loaded_model != "whisper":
+            raise RuntimeError("Whisper pipeline не загружен")
+
+        self._enforce_max_audio_length(audio_path)
+
+        try:
+            return self.whisper_pipeline(audio_path, batch_size=self.whisper_batch_size)
+        except TypeError:
+            return self.whisper_pipeline(audio_path)
+
     # ==================== PYANNOTE (DIARIZATION) ====================
     
     async def load_diarization(self) -> bool:
@@ -337,8 +389,8 @@ class ModelManager:
             "device": self.device,
             "whisper_quantization": self.gpu_config.get("whisper_quantization", "unknown"),
             "qwen_quantization": self.gpu_config.get("qwen_quantization", "unknown"),
-            "chunk_length_s": self.gpu_config.get("chunk_length_s"),
-            "stride_length_s": self.gpu_config.get("stride_length_s"),
+            "chunk_length_s": self.whisper_chunk_length_s,
+            "stride_length_s": self.whisper_stride_length_s,
             "batch_size": self.whisper_batch_size,
             "max_audio_length_minutes": self.max_audio_length_minutes,
         }
