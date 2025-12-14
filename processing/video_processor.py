@@ -7,12 +7,22 @@ import re
 import asyncio
 import subprocess
 import logging
+import warnings
 import torch
 import torchaudio
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 import yt_dlp
 from transformers import StoppingCriteria, StoppingCriteriaList
+
+# Подавляем предупреждения о torchaudio deprecation (будут актуальны в версии 2.9+)
+warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+# Подавляем экспериментальное предупреждение о chunking в Whisper
+warnings.filterwarnings("ignore", message=".*chunk_length_s is very experimental.*")
+# Подавляем предупреждение о forced_decoder_ids
+warnings.filterwarnings("ignore", message=".*forced_decoder_ids.*")
+# Подавляем предупреждение о language detection в Whisper
+warnings.filterwarnings("ignore", message=".*multilingual Whisper will default to language detection.*")
 
 # Локальные модули
 from config import AppConfig, GPUConfig
@@ -74,6 +84,11 @@ class VideoProcessor:
     def __init__(self, task_id: Optional[str] = None):
         self.task_id = task_id
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+        # Включаем TF32 для лучшей производительности на совместимых GPU
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         
         # Инициализация конфигурации
         self.app_config = AppConfig()
