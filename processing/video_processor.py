@@ -214,17 +214,17 @@ class VideoProcessor:
         """
         self.logger.info(f"Начало транскрипции: {audio_path}")
         self.gpu_manager.take_snapshot("before_transcription")
-        
+
         # Загружаем Whisper
         self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
         success = await self.model_manager.load_whisper()
         if not success:
             raise Exception("Не удалось загрузить Whisper модель")
-        
+
         self._update_progress(50, "transcription", "Транскрипция речи...")
         
         try:
-            result = self.model_manager.whisper_pipeline(audio_path)
+            result = self.model_manager.whisper_transcribe(audio_path)
             segments = []
             
             if isinstance(result.get("chunks"), list):
