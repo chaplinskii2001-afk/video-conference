@@ -353,7 +353,94 @@ class VideoProcessor:
             raise
         finally:
             await self.model_manager.unload_current_model()
-    
+
+    # ==================== ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ + ДИАРИЗАЦИЯ ====================
+
+    def _transcribe_with_whisper_loaded(self, audio_path: str) -> List[Dict]:
+        result = self.model_manager.whisper_transcribe(audio_path)
+        segments = []
+
+        if isinstance(result.get("chunks"), list):
+            for chunk in result["chunks"]:
+                segments.append(
+                    {
+                        "start": chunk["timestamp"][0],
+                        "end": chunk["timestamp"][1],
+                        "text": chunk["text"].strip(),
+                    }
+                )
+        else:
+            segments.append({"start": 0.0, "end": None, "text": result.get("text", "")})
+
+        return segments
+
+    def _diarize_with_pyannote_loaded(self, audio_path: str) -> List[Dict]:
+        if self.model_manager.diarization_pipeline is None:
+            raise RuntimeError("PyAnnote pipeline не загружен")
+
+        waveform, sample_rate = torchaudio.load(audio_path)
+
+        if sample_rate != 16000:
+            self.logger.info(f"Ресемплинг: {sample_rate} Hz -> 16000 Hz")
+            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+            waveform = resampler(waveform)
+            sample_rate = 16000
+
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        if torch.cuda.is_available():
+            waveform = waveform.to("cuda")
+
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+        self.logger.info(f"Аудио подготовлено: shape={waveform.shape}")
+
+        inputs = {"waveform": waveform, "sample_rate": sample_rate}
+        output = self.model_manager.diarization_pipeline(inputs)
+
+        diarization = output.speaker_diarization
+        result = []
+        for turn, speaker in diarization:
+            result.append({"start": turn.start, "end": turn.end, "speaker": speaker})
+
+        del waveform
+        del inputs
+
+        return result
+
+    async def transcribe_and_diarize_parallel(self, audio_path: str) -> tuple[List[Dict], List[Dict]]:
+        self.logger.info(f"Параллельная транскрипция + диаризация: {audio_path}")
+        self.gpu_manager.take_snapshot("before_parallel_whisper_pyannote")
+
+        self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
+        success = await self.model_manager.load_whisper(unload_others=False)
+        if not success:
+            raise Exception("Не удалось загрузить Whisper модель")
+
+        self._update_progress(56, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
+        success = await self.model_manager.load_diarization(unload_others=False)
+        if not success:
+            raise Exception("Не удалось загрузить PyAnnote модель")
+
+        self._update_progress(60, "transcription", "Whisper и PyAnnote работают параллельно...")
+
+        transcription_task = asyncio.to_thread(self._transcribe_with_whisper_loaded, audio_path)
+        diarization_task = asyncio.to_thread(self._diarize_with_pyannote_loaded, audio_path)
+
+        transcription_segments, diarization_segments = await asyncio.gather(
+            transcription_task,
+            diarization_task,
+        )
+
+        self.logger.info(
+            f"Параллельная обработка завершена: transcription={len(transcription_segments)}, diarization={len(diarization_segments)}"
+        )
+        self.gpu_manager.take_snapshot("after_parallel_whisper_pyannote")
+
+        return transcription_segments, diarization_segments
+
     # ==================== ОБЪЕДИНЕНИЕ ДАННЫХ ====================
     
     def align_transcription_and_diarization(
@@ -898,14 +985,9 @@ class VideoProcessor:
             else:
                 audio_path = self.extract_audio(file_path, task_id)
             
-            # 2. ЗАГРУЗКА МОДЕЛЕЙ И ТРАНСКРИПЦИЯ
-            self._update_progress(35, "loading_models", "Загрузка моделей ИИ...")
-            self._update_progress(45, "transcription", "Транскрипция речи...")
-            transcription_segments = await self.transcribe_audio(audio_path)
-            
-            # 3. ДИАРИЗАЦИЯ
-            self._update_progress(60, "diarization", "Определение спикеров...")
-            diarization_segments = await self.diarize_audio(audio_path)
+            # 2-3. ТРАНСКРИПЦИЯ + ДИАРИЗАЦИЯ (ПАРАЛЛЕЛЬНО)
+            self._update_progress(35, "loading_models", "Загрузка моделей Whisper и PyAnnote...")
+            transcription_segments, diarization_segments = await self.transcribe_and_diarize_parallel(audio_path)
             
             # 4. ОБЪЕДИНЕНИЕ
             self._update_progress(75, "merging", "Объединение результатов...")
@@ -917,6 +999,10 @@ class VideoProcessor:
             # Извлекаем полный текст и статистику
             full_text = " ".join([seg["text"] for seg in aligned_segments])
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
+
+            # Освобождаем VRAM перед суммаризацией
+            self._update_progress(78, "loading_models", "Выгрузка Whisper/PyAnnote и очистка памяти...")
+            await self.model_manager.unload_models({"whisper", "diarization"}, cleanup_mode="deep")
             
             # 5. СУММАРИЗАЦИЯ
             self._update_progress(85, "summarization", "Создание документа...")

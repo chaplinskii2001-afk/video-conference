@@ -11,7 +11,24 @@ logger = logging.getLogger(__name__)
 
 class GPUConfig:
     """Конфигурация на основе доступной GPU памяти"""
-    
+
+    DEFAULT_WHISPER_8BIT_CONFIG = {
+        "load_in_8bit": True,
+        "dtype": "float16",
+    }
+
+    DEFAULT_QWEN_8BIT_CONFIG = {
+        "load_in_8bit": True,
+        "dtype": "float16",
+    }
+
+    DEFAULT_QWEN_4BIT_BNB_CONFIG = {
+        "load_in_4bit": True,
+        "use_double_quant": True,
+        "quant_type": "nf4",
+        "compute_dtype": "float16",
+    }
+
     # Определяем профили для разных классов GPU
     PROFILES = {
         "low": {
@@ -20,6 +37,9 @@ class GPUConfig:
             "max_vram_gb": 6,
             "whisper_quantization": "float32",
             "qwen_quantization": "4bit",
+            "whisper_8bit_config": DEFAULT_WHISPER_8BIT_CONFIG.copy(),
+            "qwen_8bit_config": DEFAULT_QWEN_8BIT_CONFIG.copy(),
+            "qwen_4bit_bnb_config": DEFAULT_QWEN_4BIT_BNB_CONFIG.copy(),
             "batch_size": 1,
             "max_audio_length_minutes": 90,
             "chunk_length_s": 30,
@@ -31,6 +51,9 @@ class GPUConfig:
             "max_vram_gb": 12,
             "whisper_quantization": "float16",
             "qwen_quantization": "8bit",
+            "whisper_8bit_config": DEFAULT_WHISPER_8BIT_CONFIG.copy(),
+            "qwen_8bit_config": DEFAULT_QWEN_8BIT_CONFIG.copy(),
+            "qwen_4bit_bnb_config": DEFAULT_QWEN_4BIT_BNB_CONFIG.copy(),
             "batch_size": 2,
             "max_audio_length_minutes": 120,
             "chunk_length_s": 30,
@@ -42,6 +65,9 @@ class GPUConfig:
             "max_vram_gb": 24,
             "whisper_quantization": "float16",
             "qwen_quantization": "float16",
+            "whisper_8bit_config": DEFAULT_WHISPER_8BIT_CONFIG.copy(),
+            "qwen_8bit_config": DEFAULT_QWEN_8BIT_CONFIG.copy(),
+            "qwen_4bit_bnb_config": DEFAULT_QWEN_4BIT_BNB_CONFIG.copy(),
             "batch_size": 4,
             "max_audio_length_minutes": 180,
             "chunk_length_s": 30,
@@ -53,11 +79,14 @@ class GPUConfig:
             "max_vram_gb": 999,
             "whisper_quantization": "float32",
             "qwen_quantization": "float16",
+            "whisper_8bit_config": DEFAULT_WHISPER_8BIT_CONFIG.copy(),
+            "qwen_8bit_config": DEFAULT_QWEN_8BIT_CONFIG.copy(),
+            "qwen_4bit_bnb_config": DEFAULT_QWEN_4BIT_BNB_CONFIG.copy(),
             "batch_size": 8,
             "max_audio_length_minutes": 300,
             "chunk_length_s": 30,
             "stride_length_s": (6, 2),
-        }
+        },
     }
 
     @staticmethod
@@ -115,6 +144,9 @@ class GPUConfig:
             "name": "CPU режим",
             "whisper_quantization": "8bit",
             "qwen_quantization": "4bit",
+            "whisper_8bit_config": GPUConfig.DEFAULT_WHISPER_8BIT_CONFIG.copy(),
+            "qwen_8bit_config": GPUConfig.DEFAULT_QWEN_8BIT_CONFIG.copy(),
+            "qwen_4bit_bnb_config": GPUConfig.DEFAULT_QWEN_4BIT_BNB_CONFIG.copy(),
             "batch_size": 1,
             "max_audio_length_minutes": 30,
             "chunk_length_s": 20,
