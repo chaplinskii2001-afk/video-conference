@@ -8,49 +8,43 @@
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <h1>Система протоколирования совещаний</h1>
             <p>Автоматическая транскрипция, диаризация спикеров и создание протоколов</p>
         </div>
 
-        <!-- Main Content -->
         <div class="content">
-            <!-- Upload Section -->
             <div class="upload-section">
-                <!-- Tabs -->
                 <div class="tabs">
-                    <button class="tab-button active" onclick="switchTab('file')">Загрузка файла</button>
-                    <button class="tab-button" onclick="switchTab('url')">По ссылке</button>
+                    <button class="tab-button active" onclick="switchTab('file', event)">Загрузка файлов</button>
+                    <button class="tab-button" onclick="switchTab('url', event)">По ссылке</button>
                 </div>
 
-                <!-- File Tab -->
                 <div id="file-tab" class="tab-content active">
-                    <input type="file" id="file-input" accept=".mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.m4a,.flac,.aac,.ogg">
+                    <input type="file" id="file-input" multiple accept=".mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.m4a,.flac,.aac,.ogg">
                     <label for="file-input">
                         <div class="file-upload-zone" id="file-upload-zone">
                             <div class="file-upload-icon">📁</div>
-                            <div class="file-upload-text">Выберите файл или перетащите его сюда</div>
+                            <div class="file-upload-text">Выберите один или несколько файлов (можно перетащить сюда)</div>
                             <div class="file-upload-hint">Поддерживаются видео и аудио форматы (до 1 GB)</div>
                         </div>
                     </label>
-                    <div id="file-info" class="file-info-card hidden"></div>
+
+                    <div id="file-list" class="file-list hidden"></div>
                 </div>
 
-                <!-- URL Tab -->
                 <div id="url-tab" class="tab-content">
                     <div class="url-input-wrapper">
                         <span class="url-icon">🔗</span>
-                        <input 
-                            type="url" 
-                            id="url-input" 
-                            placeholder="https://youtube.com/watch?v=..." 
+                        <input
+                            type="url"
+                            id="url-input"
+                            placeholder="https://youtube.com/watch?v=..."
                             autocomplete="off"
                         >
                     </div>
                 </div>
 
-                <!-- Summary Type -->
                 <div class="form-group">
                     <label class="form-label" for="summary-type">Тип документа</label>
                     <select id="summary-type">
@@ -59,66 +53,78 @@
                     </select>
                 </div>
 
-                <!-- Process Button -->
                 <button id="process-btn" onclick="startProcessing()">Начать обработку</button>
             </div>
 
-            <!-- Progress Section -->
-            <div id="progress-section" class="progress-section hidden">
-                <!-- Current Stage Display -->
-                <div class="stage-display">
-                    <div class="stage-icon" id="stage-icon">🚀</div>
-                    <div class="stage-content">
-                        <div class="stage-label">Идет обработка</div>
-                        <div class="stage-name" id="current-stage-name">Подготовка</div>
-                        <div class="stage-description" id="stage-description">Инициализация системы</div>
+            <div class="processing-layout">
+                <div class="main-panel">
+                    <div id="progress-section" class="progress-section hidden">
+                        <div class="batch-status">
+                            <div class="batch-status-row">
+                                <span class="batch-label">Сейчас:</span>
+                                <span id="batch-current-file" class="batch-value">—</span>
+                            </div>
+                            <div class="batch-status-row">
+                                <span class="batch-label">Далее:</span>
+                                <span id="batch-next-file" class="batch-value">—</span>
+                            </div>
+                        </div>
+
+                        <div class="stage-display">
+                            <div class="stage-icon" id="stage-icon">🚀</div>
+                            <div class="stage-content">
+                                <div class="stage-label">Идет обработка</div>
+                                <div class="stage-name" id="current-stage-name">Подготовка</div>
+                                <div class="stage-description" id="stage-description">Инициализация системы</div>
+                            </div>
+                        </div>
+
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-wrapper">
+                                <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                            </div>
+                            <div id="progress-percentage" class="progress-percentage">0%</div>
+                        </div>
+
+                        <div id="batch-queue" class="batch-queue"></div>
+                    </div>
+
+                    <div id="results-section" class="results-section hidden">
+                        <h3>✅ Пакетная обработка завершена</h3>
+
+                        <div class="result-stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-label">Файлов успешно</div>
+                                <div class="stat-value" id="stat-success">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Ошибок</div>
+                                <div class="stat-value" id="stat-errors">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Всего файлов</div>
+                                <div class="stat-value" id="stat-total">0</div>
+                            </div>
+                        </div>
+
+                        <div class="results-hint">Готовые результаты доступны справа.</div>
+                    </div>
+
+                    <div id="error-section" class="error-section hidden">
+                        <div class="error-title">Ошибка</div>
+                        <div id="error-message" class="error-message"></div>
                     </div>
                 </div>
 
-                <!-- Progress Bar -->
-                <div class="progress-bar-container">
-                    <div class="progress-bar-wrapper">
-                        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                <div class="side-panel">
+                    <div class="side-panel-header">
+                        <h3>📥 Готовые результаты</h3>
+                        <button id="clear-history-btn" class="link-button" onclick="clearHistory()">Очистить</button>
                     </div>
-                    <div id="progress-percentage" class="progress-percentage">0%</div>
-                </div>
-            </div>
-
-            <!-- Results Section -->
-            <div id="results-section" class="results-section hidden">
-                <h3>✅ Обработка завершена</h3>
-                
-                <!-- Stats -->
-                <div class="result-stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">Сегментов обработано</div>
-                        <div class="stat-value" id="stat-segments">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Спикеров определено</div>
-                        <div class="stat-value" id="stat-speakers">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Время обработки</div>
-                        <div class="stat-value" id="stat-time">0 мин</div>
+                    <div id="completed-results" class="completed-results">
+                        <div class="completed-empty">Пока нет готовых файлов</div>
                     </div>
                 </div>
-
-                <!-- Download Buttons -->
-                <div class="download-buttons">
-                    <a id="download-summary" class="download-btn" href="#" target="_blank">
-                        📄 Скачать краткое содержание
-                    </a>
-                    <a id="download-transcription" class="download-btn" href="#" target="_blank">
-                        📝 Скачать полную расшифровку
-                    </a>
-                </div>
-            </div>
-
-            <!-- Error Section -->
-            <div id="error-section" class="error-section hidden">
-                <div class="error-title">Ошибка</div>
-                <div id="error-message" class="error-message"></div>
             </div>
         </div>
     </div>
