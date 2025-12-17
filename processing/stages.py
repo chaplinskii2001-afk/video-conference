@@ -47,7 +47,15 @@ PROCESSING_STAGES = {
         "icon": "🤖"
     },
     
-    # Транскрипция
+    # Параллельная обработка транскрипции и диаризации
+    "transcription_and_diarization": {
+        "order": 6,
+        "display_name": "Параллельная обработка",
+        "description": "Распознавание речи (Whisper) и определение спикеров (PyAnnote) одновременно",
+        "icon": "⚡"
+    },
+    
+    # Транскрипция (отдельно, для обратной совместимости)
     "transcription": {
         "order": 6,
         "display_name": "Транскрипция речи",
@@ -55,7 +63,7 @@ PROCESSING_STAGES = {
         "icon": "🎤"
     },
     
-    # Диаризация
+    # Диаризация (отдельно, для обратной совместимости)
     "diarization": {
         "order": 7,
         "display_name": "Определение спикеров",
@@ -65,7 +73,7 @@ PROCESSING_STAGES = {
     
     # Объединение результатов
     "merging": {
-        "order": 8,
+        "order": 7,
         "display_name": "Объединение результатов",
         "description": "Согласование транскрипции и спикеров",
         "icon": "🔗"
@@ -73,7 +81,7 @@ PROCESSING_STAGES = {
     
     # Суммаризация
     "summarization": {
-        "order": 9,
+        "order": 8,
         "display_name": "Создание документа",
         "description": "Написание краткого содержания (Qwen)",
         "icon": "📝"
@@ -81,7 +89,7 @@ PROCESSING_STAGES = {
     
     # Сохранение
     "saving": {
-        "order": 10,
+        "order": 9,
         "display_name": "Сохранение результатов",
         "description": "Финализация и сохранение",
         "icon": "💾"
@@ -89,7 +97,7 @@ PROCESSING_STAGES = {
     
     # Завершение
     "completed": {
-        "order": 11,
+        "order": 10,
         "display_name": "Обработка завершена",
         "description": "Успешно завершено",
         "icon": "✅"

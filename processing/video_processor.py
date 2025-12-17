@@ -231,17 +231,21 @@ class VideoProcessor:
     
     # ==================== ТРАНСКРИПЦИЯ ====================
     
-    async def transcribe_audio(self, audio_path: str) -> List[Dict]:
+    async def transcribe_audio(self, audio_path: str, skip_unload: bool = False) -> List[Dict]:
         """
         Транскрипция аудио в текст с использованием Whisper
         Возвращает список сегментов с временными метками
+        
+        Args:
+            audio_path: путь к аудиофайлу
+            skip_unload: если True, не выгружает модель (для параллельной обработки)
         """
         self.logger.info(f"Начало транскрипции: {audio_path}")
         self.gpu_manager.take_snapshot("before_transcription")
 
         # Загружаем Whisper
         self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
-        success = await self.model_manager.load_whisper()
+        success = await self.model_manager.load_whisper(skip_unload=skip_unload)
         if not success:
             raise Exception("Не удалось загрузить Whisper модель")
 
@@ -275,21 +279,27 @@ class VideoProcessor:
             self.logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
             raise
         finally:
-            await self.model_manager.unload_current_model()
+            # Выгружаем только если это не параллельная обработка
+            if not skip_unload:
+                await self.model_manager.unload_current_model()
     
     # ==================== ДИАРИЗАЦИЯ ====================
     
-    async def diarize_audio(self, audio_path: str) -> List[Dict]:
+    async def diarize_audio(self, audio_path: str, skip_unload: bool = False) -> List[Dict]:
         """
         Диаризация аудио - определение кто и когда говорил
         Использует PyAnnote для разделения по спикерам
+        
+        Args:
+            audio_path: путь к аудиофайлу
+            skip_unload: если True, не выгружает модель (для параллельной обработки)
         """
         self.logger.info(f"Начало диаризации: {audio_path}")
         self.gpu_manager.take_snapshot("before_diarization")
         
         # Загружаем PyAnnote
         self._update_progress(58, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
-        success = await self.model_manager.load_diarization()
+        success = await self.model_manager.load_diarization(skip_unload=skip_unload)
         if not success:
             raise Exception("Не удалось загрузить PyAnnote модель")
         
@@ -352,7 +362,9 @@ class VideoProcessor:
             self.logger.error(f"Ошибка диаризации: {e}", exc_info=True)
             raise
         finally:
-            await self.model_manager.unload_current_model()
+            # Выгружаем только если это не параллельная обработка
+            if not skip_unload:
+                await self.model_manager.unload_current_model()
     
     # ==================== ОБЪЕДИНЕНИЕ ДАННЫХ ====================
     
@@ -741,28 +753,28 @@ class VideoProcessor:
         
         self.logger.info(f"Начало суммаризации ({summary_type}): {len(text)} символов")
         self.gpu_manager.take_snapshot("before_summarization")
-        
+
         # Загружаем Qwen
-        self._update_progress(80, "loading_models", "Загрузка модели суммаризации (Qwen)...")
+        self._update_progress(82, "loading_models", "Загрузка модели суммаризации (Qwen)...")
         success = await self.model_manager.load_qwen()
         if not success:
             raise Exception("Не удалось загрузить Qwen модель")
-        
-        self._update_progress(85, "summarization", "Создание документа...")
-        
+
+        self._update_progress(84, "summarization", "Создание документа...")
+
         try:
             # Разбиваем текст на части
             max_chars = AppConfig.SUMMARIZATION_MAX_CHARS
             chunks = self.split_text_into_chunks(text, max_chars=max_chars)
             total_chunks = len(chunks)
-            
+
             self.logger.info(f"Текст разбит на {total_chunks} частей")
-            
+
             # Суммаризуем каждую часть
             chunk_summaries = []
             for i, chunk in enumerate(chunks):
                 self._update_progress(
-                    85 + int(10 / total_chunks * i),
+                    84 + int(8 / total_chunks * i),
                     "summarization",
                     f"Суммаризация части {i+1}/{total_chunks}"
                 )
@@ -858,6 +870,141 @@ class VideoProcessor:
             self.logger.error(f"Ошибка сохранения файла {file_path}: {e}")
             raise
     
+    # ==================== ПАРАЛЛЕЛЬНАЯ ОБРАБОТКА ====================
+    
+    async def process_transcription_and_diarization_parallel(self, audio_path: str) -> tuple:
+        """
+        Параллельная обработка транскрипции и диаризации
+        Загружает обе модели и запускает их одновременно для экономии времени
+        
+        Returns:
+            кортеж (transcription_segments, diarization_segments)
+        """
+        self.logger.info("Запуск параллельной обработки транскрипции и диаризации")
+        self._update_progress(45, "loading_models", "Загрузка моделей Whisper и PyAnnote...")
+        
+        try:
+            # Загружаем обе модели параллельно
+            whisper_result = await self.model_manager.load_whisper(skip_unload=True)
+            diarization_result = await self.model_manager.load_diarization(skip_unload=True)
+            
+            if not whisper_result:
+                raise Exception("Не удалось загрузить Whisper модель")
+            if not diarization_result:
+                raise Exception("Не удалось загрузить PyAnnote модель")
+            
+            self.logger.info("Обе модели загружены, запуск параллельной обработки...")
+            self._update_progress(52, "transcription_and_diarization", "Транскрипция и диаризация (параллельно)...")
+            
+            # Запускаем оба процесса параллельно
+            transcription_segments, diarization_segments = await asyncio.gather(
+                self._transcribe_audio_parallel(audio_path),
+                self._diarize_audio_parallel(audio_path),
+                return_exceptions=False
+            )
+            
+            self.logger.info("Параллельная обработка завершена")
+            return transcription_segments, diarization_segments
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка параллельной обработки: {e}", exc_info=True)
+            raise
+        finally:
+            # Выгружаем обе модели после завершения
+            await self.model_manager.unload_whisper_and_diarization()
+    
+    async def _transcribe_audio_parallel(self, audio_path: str) -> List[Dict]:
+        """Вспомогательный метод для параллельной транскрипции"""
+        self._update_progress(52, "transcription", "Транскрипция речи...")
+        
+        try:
+            result = self.model_manager.whisper_transcribe(audio_path)
+            segments = []
+            
+            if isinstance(result.get("chunks"), list):
+                for chunk in result["chunks"]:
+                    segments.append({
+                        "start": chunk["timestamp"][0],
+                        "end": chunk["timestamp"][1],
+                        "text": chunk["text"].strip(),
+                    })
+            else:
+                segments.append({
+                    "start": 0.0,
+                    "end": None,
+                    "text": result.get("text", "")
+                })
+            
+            self.logger.info(f"Транскрипция завершена: {len(segments)} сегментов")
+            self.gpu_manager.take_snapshot("after_transcription")
+            
+            return segments
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
+            raise
+    
+    async def _diarize_audio_parallel(self, audio_path: str) -> List[Dict]:
+        """Вспомогательный метод для параллельной диаризации"""
+        self._update_progress(55, "diarization", "Определение спикеров...")
+        
+        try:
+            # Загружаем аудио в память
+            waveform, sample_rate = torchaudio.load(audio_path)
+            
+            # Ресемплинг если нужно
+            if sample_rate != 16000:
+                self.logger.info(f"Ресемплинг: {sample_rate} Hz -> 16000 Hz")
+                resampler = torchaudio.transforms.Resample(
+                    orig_freq=sample_rate,
+                    new_freq=16000
+                )
+                waveform = resampler(waveform)
+                sample_rate = 16000
+            
+            # Конвертация в моно если стерео
+            if waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0, keepdim=True)
+            
+            # Перенос на GPU если доступно
+            if torch.cuda.is_available():
+                waveform = waveform.to("cuda")
+            
+            self.logger.info(f"Аудио подготовлено: shape={waveform.shape}")
+
+            # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            
+            # Запуск диаризации
+            inputs = {"waveform": waveform, "sample_rate": sample_rate}
+            output = self.model_manager.diarization_pipeline(inputs)
+            
+            # Извлечение результатов
+            diarization = output.speaker_diarization
+            result = []
+            
+            for turn, speaker in diarization:
+                result.append({
+                    "start": turn.start,
+                    "end": turn.end,
+                    "speaker": speaker
+                })
+            
+            self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
+            self.gpu_manager.take_snapshot("after_diarization")
+            
+            # Очистка
+            del waveform
+            del inputs
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка диаризации: {e}", exc_info=True)
+            raise
+    
     # ==================== ГЛАВНЫЙ ПАЙПЛАЙН ====================
     
     async def process_media(
@@ -869,14 +1016,13 @@ class VideoProcessor:
     ) -> Dict:
         """
         Главный метод обработки медиа файла
-        
+
         Выполняет полный цикл:
         1. Подготовка аудио
-        2. Транскрипция
-        3. Диаризация
-        4. Объединение
-        5. Суммаризация
-        6. Сохранение
+        2. Параллельная транскрипция и диаризация (Whisper + PyAnnote одновременно)
+        3. Объединение результатов
+        4. Суммаризация текста (Qwen)
+        5. Форматирование и сохранение
         """
         self.logger.info("=" * 60)
         self.logger.info(f"НАЧАЛО ОБРАБОТКИ ЗАДАЧИ: {task_id}")
@@ -897,17 +1043,12 @@ class VideoProcessor:
                 audio_path = self.process_audio_file(file_path, task_id)
             else:
                 audio_path = self.extract_audio(file_path, task_id)
-            
-            # 2. ЗАГРУЗКА МОДЕЛЕЙ И ТРАНСКРИПЦИЯ
+
+            # 2. ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ
             self._update_progress(35, "loading_models", "Загрузка моделей ИИ...")
-            self._update_progress(45, "transcription", "Транскрипция речи...")
-            transcription_segments = await self.transcribe_audio(audio_path)
+            transcription_segments, diarization_segments = await self.process_transcription_and_diarization_parallel(audio_path)
             
-            # 3. ДИАРИЗАЦИЯ
-            self._update_progress(60, "diarization", "Определение спикеров...")
-            diarization_segments = await self.diarize_audio(audio_path)
-            
-            # 4. ОБЪЕДИНЕНИЕ
+            # 3. ОБЪЕДИНЕНИЕ
             self._update_progress(75, "merging", "Объединение результатов...")
             aligned_segments = self.align_transcription_and_diarization(
                 transcription_segments,
@@ -917,12 +1058,12 @@ class VideoProcessor:
             # Извлекаем полный текст и статистику
             full_text = " ".join([seg["text"] for seg in aligned_segments])
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
-            
-            # 5. СУММАРИЗАЦИЯ
-            self._update_progress(85, "summarization", "Создание документа...")
+
+            # 4. СУММАРИЗАЦИЯ
+            self._update_progress(80, "summarization", "Создание документа...")
             summary = await self.summarize_text(full_text, summary_type)
-            
-            # 6. ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ
+
+            # 5. ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ
             self._update_progress(95, "saving", "Сохранение результатов...")
             
             formatted_transcription = self.format_transcription(aligned_segments)
