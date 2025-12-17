@@ -60,6 +60,7 @@ class ModelManager:
         self.qwen_tokenizer = None
         
         self.current_loaded_model = None
+        self.loaded_models = set()  # Отслеживание загруженных моделей
         
         # Получаем конфигурацию GPU
         self.gpu_config = config.get("gpu_config", {})
@@ -92,12 +93,11 @@ class ModelManager:
         Загрузка модели Whisper для транскрипции
         Использует квантование на основе доступной GPU памяти
         """
-        if self.whisper_pipeline is not None and self.current_loaded_model == "whisper":
+        if self.whisper_pipeline is not None:
             self.logger.info("Whisper уже загружен")
             return True
         
-        # Выгружаем другие модели
-        await self.unload_current_model()
+        # Не выгружаем другие модели для поддержки параллельной работы
         
         self.logger.info("Загрузка Whisper модели...")
         self.gpu_manager.take_snapshot("before_whisper")
@@ -165,7 +165,7 @@ class ModelManager:
                 return_timestamps=True,
             )
             
-            self.current_loaded_model = "whisper"
+            self.loaded_models.add("whisper")
             self.gpu_manager.take_snapshot("after_whisper")
             
             self.logger.info("✅ Whisper загружен успешно")
@@ -205,7 +205,7 @@ class ModelManager:
             )
 
     def whisper_transcribe(self, audio_path: str) -> Dict:
-        if self.whisper_pipeline is None or self.current_loaded_model != "whisper":
+        if self.whisper_pipeline is None or "whisper" not in self.loaded_models:
             raise RuntimeError("Whisper pipeline не загружен")
 
         self._enforce_max_audio_length(audio_path)
@@ -221,12 +221,11 @@ class ModelManager:
         """
         Загрузка модели PyAnnote для диаризации спикеров
         """
-        if self.diarization_pipeline is not None and self.current_loaded_model == "diarization":
+        if self.diarization_pipeline is not None:
             self.logger.info("PyAnnote уже загружен")
             return True
         
-        # Выгружаем другие модели
-        await self.unload_current_model()
+        # Не выгружаем другие модели для поддержки параллельной работы
         
         self.logger.info("Загрузка PyAnnote модели...")
         self.gpu_manager.take_snapshot("before_diarization")
@@ -251,7 +250,7 @@ class ModelManager:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
-            self.current_loaded_model = "diarization"
+            self.loaded_models.add("diarization")
             self.gpu_manager.take_snapshot("after_diarization")
             
             self.logger.info("✅ PyAnnote загружен успешно")
@@ -270,12 +269,12 @@ class ModelManager:
         Загрузка модели Qwen для суммаризации
         Использует квантование на основе доступной GPU памяти
         """
-        if self.qwen_model is not None and self.current_loaded_model == "qwen":
+        if self.qwen_model is not None:
             self.logger.info("Qwen уже загружен")
             return True
         
-        # Выгружаем другие модели
-        await self.unload_current_model()
+        # Выгружаем Whisper и PyAnnote перед загрузкой Qwen для экономии памяти
+        await self.unload_whisper_and_diarization()
         
         self.logger.info("Загрузка Qwen модели...")
         self.gpu_manager.take_snapshot("before_qwen")
@@ -333,7 +332,7 @@ class ModelManager:
                     dtype=dtype,
                 )
             
-            self.current_loaded_model = "qwen"
+            self.loaded_models.add("qwen")
             self.gpu_manager.take_snapshot("after_qwen")
             
             self.logger.info("✅ Qwen загружен успешно")
@@ -346,54 +345,95 @@ class ModelManager:
     
     # ==================== УПРАВЛЕНИЕ ====================
     
+    async def load_whisper_and_diarization_parallel(self) -> bool:
+        """
+        Параллельная загрузка моделей Whisper и PyAnnote
+        """
+        self.logger.info("Параллельная загрузка Whisper и PyAnnote...")
+        
+        # Запускаем загрузку обеих моделей одновременно
+        tasks = [
+            self.load_whisper(),
+            self.load_diarization()
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        success_count = sum(1 for result in results if result is True)
+        
+        if success_count == 2:
+            self.logger.info("✅ Whisper и PyAnnote загружены параллельно")
+            return True
+        else:
+            self.logger.error(f"❌ Ошибка параллельной загрузки: {results}")
+            return False
+    
+    async def unload_whisper_and_diarization(self):
+        """Выгрузка моделей Whisper и PyAnnote"""
+        models_to_unload = []
+        
+        if "whisper" in self.loaded_models:
+            models_to_unload.append("whisper")
+        if "diarization" in self.loaded_models:
+            models_to_unload.append("diarization")
+        
+        for model_name in models_to_unload:
+            self.logger.info(f"Выгрузка модели: {model_name}")
+            
+            try:
+                if model_name == "whisper":
+                    del self.whisper_pipeline
+                    del self.whisper_processor
+                    self.whisper_pipeline = None
+                    self.whisper_processor = None
+                
+                elif model_name == "diarization":
+                    del self.diarization_pipeline
+                    self.diarization_pipeline = None
+                
+                self.loaded_models.discard(model_name)
+                
+            except Exception as e:
+                self.logger.warning(f"Ошибка при выгрузке модели {model_name}: {e}")
+        
+        if models_to_unload:
+            await self.gpu_manager.cleanup("standard")
+    
     async def unload_current_model(self):
-        """Выгрузка текущей загруженной модели"""
-        if self.current_loaded_model is None:
+        """Выгрузка текущей загруженной модели (устаревший метод, поддерживается для совместимости)"""
+        # Для обратной совместимости - выгружаем Qwen если он загружен
+        if "qwen" in self.loaded_models:
+            await self.unload_qwen()
+        elif "whisper" in self.loaded_models:
+            await self.unload_whisper_and_diarization()
+    
+    async def unload_qwen(self):
+        """Выгрузка модели Qwen"""
+        if "qwen" not in self.loaded_models:
             return
         
-        self.logger.info(f"Выгрузка модели: {self.current_loaded_model}")
+        self.logger.info("Выгрузка модели Qwen")
         
         try:
-            if self.current_loaded_model == "whisper":
-                del self.whisper_pipeline
-                del self.whisper_processor
-                self.whisper_pipeline = None
-                self.whisper_processor = None
+            del self.qwen_model
+            del self.qwen_tokenizer
+            self.qwen_model = None
+            self.qwen_tokenizer = None
+            self.loaded_models.discard("qwen")
             
-            elif self.current_loaded_model == "diarization":
-                del self.diarization_pipeline
-                self.diarization_pipeline = None
-            
-            elif self.current_loaded_model == "qwen":
-                del self.qwen_model
-                del self.qwen_tokenizer
-                self.qwen_model = None
-                self.qwen_tokenizer = None
-            
-            self.current_loaded_model = None
             await self.gpu_manager.cleanup("standard")
             
         except Exception as e:
-            self.logger.warning(f"Ошибка при выгрузке модели: {e}")
+            self.logger.warning(f"Ошибка при выгрузке Qwen: {e}")
     
     async def unload_all_models(self):
         """Выгрузка всех моделей"""
         self.logger.info("Выгрузка всех моделей")
         
-        if self.whisper_pipeline:
-            del self.whisper_pipeline
-            del self.whisper_processor
-        if self.diarization_pipeline:
-            del self.diarization_pipeline
-        if self.qwen_model:
-            del self.qwen_model
-            del self.qwen_tokenizer
+        # Последовательно выгружаем все модели
+        await self.unload_whisper_and_diarization()
+        await self.unload_qwen()
         
-        self.whisper_pipeline = None
-        self.whisper_processor = None
-        self.diarization_pipeline = None
-        self.qwen_model = None
-        self.qwen_tokenizer = None
         self.current_loaded_model = None
         
         await self.gpu_manager.cleanup("deep")
@@ -401,10 +441,11 @@ class ModelManager:
     def get_loaded_models_info(self) -> Dict:
         """Информация о загруженных моделях"""
         return {
-            "whisper_loaded": self.whisper_pipeline is not None,
-            "diarization_loaded": self.diarization_pipeline is not None,
-            "qwen_loaded": self.qwen_model is not None,
-            "current_model": self.current_loaded_model,
+            "whisper_loaded": "whisper" in self.loaded_models,
+            "diarization_loaded": "diarization" in self.loaded_models,
+            "qwen_loaded": "qwen" in self.loaded_models,
+            "loaded_models": list(self.loaded_models),
+            "current_model": getattr(self, 'current_loaded_model', None),  # Для обратной совместимости
             "device": self.device,
             "whisper_quantization": self.gpu_config.get("whisper_quantization", "unknown"),
             "qwen_quantization": self.gpu_config.get("qwen_quantization", "unknown"),

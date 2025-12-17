@@ -275,26 +275,84 @@ class VideoProcessor:
             self.logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
             raise
         finally:
-            await self.model_manager.unload_current_model()
+            # Не выгружаем Whisper при параллельной обработке
+            if "whisper" not in self.model_manager.loaded_models:
+                await self.model_manager.unload_whisper_and_diarization()
     
-    # ==================== ДИАРИЗАЦИЯ ====================
+    # ==================== ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ ====================
     
-    async def diarize_audio(self, audio_path: str) -> List[Dict]:
+    async def transcribe_and_diarize_parallel(self, audio_path: str) -> tuple[List[Dict], List[Dict]]:
         """
-        Диаризация аудио - определение кто и когда говорил
-        Использует PyAnnote для разделения по спикерам
+        Параллельная транскрипция и диаризация аудио
+        Возвращает кортеж (транскрипция, диаризация)
         """
-        self.logger.info(f"Начало диаризации: {audio_path}")
-        self.gpu_manager.take_snapshot("before_diarization")
+        self.logger.info(f"Начало параллельной транскрипции и диаризации: {audio_path}")
+        self.gpu_manager.take_snapshot("before_parallel_processing")
         
-        # Загружаем PyAnnote
-        self._update_progress(58, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
-        success = await self.model_manager.load_diarization()
+        # Загружаем обе модели параллельно
+        self._update_progress(48, "loading_models", "Загрузка моделей транскрипции и диаризации...")
+        success = await self.model_manager.load_whisper_and_diarization_parallel()
         if not success:
-            raise Exception("Не удалось загрузить PyAnnote модель")
+            raise Exception("Не удалось загрузить модели для параллельной обработки")
         
-        self._update_progress(62, "diarization", "Определение спикеров...")
+        self._update_progress(55, "parallel_processing", "Параллельная транскрипция и диаризация...")
         
+        # Запускаем транскрипцию и диаризацию параллельно
+        transcription_task = self._transcribe_audio_only(audio_path)
+        diarization_task = self._diarize_audio_only(audio_path)
+        
+        try:
+            transcription_segments, diarization_segments = await asyncio.gather(
+                transcription_task, 
+                diarization_task,
+                return_exceptions=True
+            )
+            
+            # Проверяем результаты
+            if isinstance(transcription_segments, Exception):
+                raise transcription_segments
+            if isinstance(diarization_segments, Exception):
+                raise diarization_segments
+            
+            self.logger.info(f"Параллельная обработка завершена: "
+                           f"транскрипция {len(transcription_segments)} сегментов, "
+                           f"диаризация {len(diarization_segments)} сегментов")
+            self.gpu_manager.take_snapshot("after_parallel_processing")
+            
+            return transcription_segments, diarization_segments
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка параллельной обработки: {e}", exc_info=True)
+            raise
+    
+    async def _transcribe_audio_only(self, audio_path: str) -> List[Dict]:
+        """Внутренний метод для транскрипции без выгрузки модели"""
+        try:
+            result = self.model_manager.whisper_transcribe(audio_path)
+            segments = []
+            
+            if isinstance(result.get("chunks"), list):
+                for chunk in result["chunks"]:
+                    segments.append({
+                        "start": chunk["timestamp"][0],
+                        "end": chunk["timestamp"][1],
+                        "text": chunk["text"].strip(),
+                    })
+            else:
+                segments.append({
+                    "start": 0.0,
+                    "end": None,
+                    "text": result.get("text", "")
+                })
+            
+            return segments
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
+            raise
+    
+    async def _diarize_audio_only(self, audio_path: str) -> List[Dict]:
+        """Внутренний метод для диаризации без выгрузки модели"""
         try:
             # Загружаем аудио в память
             waveform, sample_rate = torchaudio.load(audio_path)
@@ -339,9 +397,6 @@ class VideoProcessor:
                     "speaker": speaker
                 })
             
-            self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
-            self.gpu_manager.take_snapshot("after_diarization")
-            
             # Очистка
             del waveform
             del inputs
@@ -351,8 +406,40 @@ class VideoProcessor:
         except Exception as e:
             self.logger.error(f"Ошибка диаризации: {e}", exc_info=True)
             raise
+    
+    # ==================== ДИАРИЗАЦИЯ ====================
+    
+    async def diarize_audio(self, audio_path: str) -> List[Dict]:
+        """
+        Диаризация аудио - определение кто и когда говорил
+        Использует PyAnnote для разделения по спикерам
+        """
+        self.logger.info(f"Начало диаризации: {audio_path}")
+        self.gpu_manager.take_snapshot("before_diarization")
+        
+        # Загружаем PyAnnote
+        self._update_progress(58, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
+        success = await self.model_manager.load_diarization()
+        if not success:
+            raise Exception("Не удалось загрузить PyAnnote модель")
+        
+        self._update_progress(62, "diarization", "Определение спикеров...")
+        
+        try:
+            result = await self._diarize_audio_only(audio_path)
+            
+            self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
+            self.gpu_manager.take_snapshot("after_diarization")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка диаризации: {e}", exc_info=True)
+            raise
         finally:
-            await self.model_manager.unload_current_model()
+            # Не выгружаем PyAnnote при параллельной обработке
+            if "diarization" not in self.model_manager.loaded_models:
+                await self.model_manager.unload_whisper_and_diarization()
     
     # ==================== ОБЪЕДИНЕНИЕ ДАННЫХ ====================
     
@@ -791,7 +878,8 @@ class VideoProcessor:
             self.logger.error(f"Ошибка суммаризации: {e}", exc_info=True)
             raise
         finally:
-            await self.model_manager.unload_current_model()
+            # Всегда выгружаем Qwen после использования
+            await self.model_manager.unload_qwen()
     
     # ==================== ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ ====================
     
@@ -898,21 +986,20 @@ class VideoProcessor:
             else:
                 audio_path = self.extract_audio(file_path, task_id)
             
-            # 2. ЗАГРУЗКА МОДЕЛЕЙ И ТРАНСКРИПЦИЯ
+            # 2. ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ
             self._update_progress(35, "loading_models", "Загрузка моделей ИИ...")
-            self._update_progress(45, "transcription", "Транскрипция речи...")
-            transcription_segments = await self.transcribe_audio(audio_path)
+            transcription_segments, diarization_segments = await self.transcribe_and_diarize_parallel(audio_path)
             
-            # 3. ДИАРИЗАЦИЯ
-            self._update_progress(60, "diarization", "Определение спикеров...")
-            diarization_segments = await self.diarize_audio(audio_path)
-            
-            # 4. ОБЪЕДИНЕНИЕ
+            # 3. ОБЪЕДИНЕНИЕ
             self._update_progress(75, "merging", "Объединение результатов...")
             aligned_segments = self.align_transcription_and_diarization(
                 transcription_segments,
                 diarization_segments
             )
+            
+            # 4. ВЫГРУЗКА МОДЕЛЕЙ И ОЧИСТКА КЭША
+            self._update_progress(80, "unloading_models", "Выгрузка моделей Whisper и PyAnnote...")
+            await self.model_manager.unload_whisper_and_diarization()
             
             # Извлекаем полный текст и статистику
             full_text = " ".join([seg["text"] for seg in aligned_segments])
