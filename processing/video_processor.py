@@ -80,7 +80,7 @@ class StopOnTokenSequence(StoppingCriteria):
 class VideoProcessor:
     """
     Главный класс для обработки видео/аудио файлов
-    
+
     Этапы обработки:
     1. Подготовка аудио (извлечение из видео / конвертация)
     2. Транскрипция речи (Whisper)
@@ -89,11 +89,23 @@ class VideoProcessor:
     5. Суммаризация текста (Qwen)
     6. Сохранение результатов
     """
-    
-    def __init__(self, task_id: Optional[str] = None):
+
+    def __init__(
+        self,
+        task_id: Optional[str] = None,
+        *,
+        upload_dir: str = "uploads",
+        results_dir: str = "results",
+    ):
         self.task_id = task_id
+        self.upload_dir = upload_dir
+        self.results_dir = results_dir
+
+        os.makedirs(self.upload_dir, exist_ok=True)
+        os.makedirs(self.results_dir, exist_ok=True)
+
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        
+
         # Включаем TF32 для лучшей производительности на совместимых GPU
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -157,8 +169,8 @@ class VideoProcessor:
         self._update_progress(10, "download", f"Скачивание: {url}")
         
         ydl_opts = {
-            "outtmpl": f"uploads/{task_id}.%(ext)s",
-            "ignoreerrors": True
+            "outtmpl": os.path.join(self.upload_dir, f"{task_id}.%(ext)s"),
+            "ignoreerrors": True,
         }
         
         try:
@@ -166,9 +178,9 @@ class VideoProcessor:
                 ydl.download([url])
             
             # Находим скачанный файл
-            for file in os.listdir("uploads"):
+            for file in os.listdir(self.upload_dir):
                 if file.startswith(task_id) and not file.endswith(".part"):
-                    file_path = f"uploads/{file}"
+                    file_path = os.path.join(self.upload_dir, file)
                     self.logger.info(f"Файл скачан: {file_path}")
                     return file_path
             
@@ -184,7 +196,7 @@ class VideoProcessor:
         Конвертация в mono 16kHz WAV для оптимальной обработки
         """
         self.logger.info(f"Извлечение аудио из видео: {video_path}")
-        audio_path = f"uploads/{task_id}.wav"
+        audio_path = os.path.join(self.upload_dir, f"{task_id}.wav")
         
         try:
             cmd = [
@@ -209,7 +221,7 @@ class VideoProcessor:
         Конвертация аудио файла в оптимальный формат
         """
         self.logger.info(f"Конвертация аудио: {audio_path}")
-        converted_path = f"uploads/{task_id}.wav"
+        converted_path = os.path.join(self.upload_dir, f"{task_id}.wav")
         
         try:
             cmd = [
@@ -1091,12 +1103,12 @@ class VideoProcessor:
             
             # Сохраняем файлы
             self.save_result(
-                f"results/{task_id}_transcription.md",
-                formatted_transcription
+                os.path.join(self.results_dir, f"{task_id}_transcription.md"),
+                formatted_transcription,
             )
             self.save_result(
-                f"results/{task_id}_summary.md",
-                summary
+                os.path.join(self.results_dir, f"{task_id}_summary.md"),
+                summary,
             )
             
             # Выводим сводку по памяти

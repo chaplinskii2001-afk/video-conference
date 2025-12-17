@@ -3,12 +3,24 @@ import uuid
 import asyncio
 import logging
 import subprocess
+from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    BackgroundTasks,
+    Header,
+    Query,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+
 from task_manager import task_manager
 import aiofiles
 import torch
@@ -33,6 +45,50 @@ def _get_tomsk_time():
 processor = None
 UPLOAD_DIR = "uploads"
 RESULTS_DIR = "results"
+
+# По умолчанию сериализуем обработку (GPU-ограничение). В будущем можно увеличить.
+processing_lock = asyncio.Lock()
+
+
+def _resolve_client_id(
+    *, x_client_id: Optional[str] = None, client_id: Optional[str] = None
+) -> str:
+    resolved = x_client_id or client_id
+    if not resolved:
+        raise HTTPException(status_code=400, detail="Missing client_id")
+
+    if any(part in resolved for part in ("..", "/", "\\")):
+        raise HTTPException(status_code=400, detail="Invalid client_id")
+
+    return resolved
+
+
+def _ensure_user_dirs(user_id: str):
+    os.makedirs(os.path.join(UPLOAD_DIR, user_id), exist_ok=True)
+    os.makedirs(os.path.join(RESULTS_DIR, user_id), exist_ok=True)
+
+
+def _detect_media_type(filename: str) -> str:
+    file_ext = os.path.splitext(filename)[1].lower()
+    audio_extensions = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}
+    return "audio" if file_ext in audio_extensions else "video"
+
+
+async def _save_upload_file(upload_file: UploadFile, destination_path: str):
+    os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+
+    async with aiofiles.open(destination_path, "wb") as out:
+        while True:
+            chunk = await upload_file.read(1024 * 1024)
+            if not chunk:
+                break
+            await out.write(chunk)
+
+    try:
+        await upload_file.close()
+    except Exception:
+        pass
+
 
 
 @asynccontextmanager
@@ -163,94 +219,176 @@ async def check_ffmpeg():
         return {"ffmpeg_available": False, "error": str(e)}
 
 
+@app.post("/batch/process")
+async def process_batch(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(None),
+    url: str = Form(None),
+    summary_type: str = Form("standard"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Запуск пакетной обработки (в указанном порядке)."""
+    if summary_type not in ["standard", "protocol"]:
+        summary_type = "standard"
+
+    client_id = x_client_id or str(uuid.uuid4())
+    _ensure_user_dirs(client_id)
+
+    try:
+        if files and len(files) > 0:
+            items_meta = [
+                {"file_name": f.filename, "source_type": "file"} for f in files
+            ]
+            batch_id, batch_items = task_manager.create_batch(
+                user_id=client_id, items=items_meta, summary_type=summary_type
+            )
+
+            for upload_file, item in zip(files, batch_items):
+                task_id = item["task_id"]
+                file_ext = os.path.splitext(upload_file.filename)[1].lower()
+                file_path = os.path.join(
+                    UPLOAD_DIR, client_id, f"{task_id}{file_ext}"
+                )
+
+                await _save_upload_file(upload_file, file_path)
+
+                background_tasks.add_task(
+                    process_media_background,
+                    task_id=task_id,
+                    user_id=client_id,
+                    file_path=file_path,
+                    url=None,
+                    media_type=_detect_media_type(upload_file.filename),
+                    summary_type=summary_type,
+                )
+
+            logger.info(
+                f"Батч {batch_id} поставлен в очередь (user_id={client_id}, файлов={len(batch_items)})"
+            )
+
+            return {
+                "client_id": client_id,
+                "batch_id": batch_id,
+                "status": "queued",
+                "summary_type": summary_type,
+                "items": batch_items,
+            }
+
+        if url:
+            items_meta = [{"file_name": url, "source_type": "url"}]
+            batch_id, batch_items = task_manager.create_batch(
+                user_id=client_id, items=items_meta, summary_type=summary_type
+            )
+            task_id = batch_items[0]["task_id"]
+
+            background_tasks.add_task(
+                process_media_background,
+                task_id=task_id,
+                user_id=client_id,
+                file_path=None,
+                url=url,
+                media_type="video",
+                summary_type=summary_type,
+            )
+
+            logger.info(
+                f"Батч {batch_id} поставлен в очередь (user_id={client_id}, url={url})"
+            )
+
+            return {
+                "client_id": client_id,
+                "batch_id": batch_id,
+                "status": "queued",
+                "summary_type": summary_type,
+                "items": batch_items,
+            }
+
+        raise HTTPException(status_code=400, detail="Не предоставлены файлы или URL")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка запуска обработки: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/process")
 async def process_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(None),
     url: str = Form(None),
     summary_type: str = Form("standard"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ):
-    """Endpoint для запуска обработки медиа"""
+    """Совместимый endpoint для запуска обработки одного файла/URL."""
     if summary_type not in ["standard", "protocol"]:
         summary_type = "standard"
-    try:
-        task_id = str(uuid.uuid4())
-        task_manager.create_task(task_id)
 
-        # Определяем тип медиа
-        media_type = "video"
-        if file:
-            file_ext = os.path.splitext(file.filename)[1].lower()
-            audio_extensions = [".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"]
-            if file_ext in audio_extensions:
-                media_type = "audio"
-
-        # Запускаем обработку в фоне
-        background_tasks.add_task(
-            process_media_background,
-            task_id,
-            file if file else None,
-            url,
-            media_type,
-            summary_type,
+    if file:
+        result = await process_batch(
+            background_tasks,
+            files=[file],
+            url=None,
+            summary_type=summary_type,
+            x_client_id=x_client_id,
+        )
+    else:
+        result = await process_batch(
+            background_tasks,
+            files=None,
+            url=url,
+            summary_type=summary_type,
+            x_client_id=x_client_id,
         )
 
-        logger.info(
-            f"Задача {task_id} запущена в фоне (тип суммаризации: {summary_type})"
-        )
-
-        return {
-            "task_id": task_id,
-            "status": "processing",
-            "summary_type": summary_type,
-        }
-
-    except Exception as e:
-        logger.error(f"Ошибка запуска обработки: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    task_id = result["items"][0]["task_id"]
+    return {
+        "client_id": result.get("client_id"),
+        "batch_id": result.get("batch_id"),
+        "task_id": task_id,
+        "status": "processing",
+        "summary_type": summary_type,
+    }
 
 
 async def process_media_background(
+    *,
     task_id: str,
-    file: UploadFile = None,
-    url: str = None,
+    user_id: str,
+    file_path: Optional[str] = None,
+    url: Optional[str] = None,
     media_type: str = "video",
     summary_type: str = "standard",
 ):
-    """Фоновая обработка медиа"""
-    processor = VideoProcessor(task_id=task_id)
-    file_path = None
+    """Фоновая обработка медиа."""
+    processor = VideoProcessor(
+        task_id=task_id,
+        upload_dir=os.path.join(UPLOAD_DIR, user_id),
+        results_dir=os.path.join(RESULTS_DIR, user_id),
+    )
+
+    local_path = file_path
 
     try:
-        # Обновляем прогресс - инициализация
         task_manager.update_progress(
             task_id, 5, "initialization", f"Начало обработки {media_type}"
         )
 
-        # Сохраняем файл или скачиваем по URL
-        if file:
-            file_ext = os.path.splitext(file.filename)[1].lower()
-            file_path = f"uploads/{task_id}{file_ext}"
-
+        if local_path:
             task_manager.update_progress(
-                task_id, 10, "download", f"Сохранение файла: {file.filename}"
+                task_id,
+                10,
+                "download",
+                f"Файл загружен: {os.path.basename(local_path)}",
             )
-
-            async with aiofiles.open(file_path, "wb") as f:
-                content = await file.read()
-                await f.write(content)
-
-            logger.info(f"Файл сохранен: {file_path}")
-
         elif url:
             task_manager.update_progress(
                 task_id, 10, "download", f"Скачивание по URL: {url}"
             )
-            file_path = await processor.download_from_url(url, task_id)
+            local_path = await processor.download_from_url(url, task_id)
         else:
             raise ValueError("Не предоставлен файл или URL")
 
-        # Обрабатываем медиа
         task_manager.update_progress(
             task_id,
             15,
@@ -258,11 +396,14 @@ async def process_media_background(
             f"Подготовка к обработке {media_type} (суммаризация: {summary_type})",
         )
 
-        result = await processor.process_media(
-            file_path, task_id, media_type, summary_type
-        )
+        await processing_lock.acquire()
+        try:
+            result = await processor.process_media(
+                local_path, task_id, media_type, summary_type
+            )
+        finally:
+            processing_lock.release()
 
-        # Сохраняем результат
         task_manager.complete_task(task_id, result)
         logger.info(f"Задача {task_id} завершена успешно")
 
@@ -271,20 +412,24 @@ async def process_media_background(
         task_manager.fail_task(task_id, str(e))
 
     finally:
-        # Очистка временных файлов
-        if file_path and os.path.exists(file_path):
+        if local_path and os.path.exists(local_path):
             try:
-                os.remove(file_path)
-                logger.info(f"Временный файл удален: {file_path}")
+                os.remove(local_path)
+                logger.info(f"Временный файл удален: {local_path}")
             except Exception as e:
-                logger.warning(f"Не удалось удалить временный файл {file_path}: {e}")
+                logger.warning(f"Не удалось удалить временный файл {local_path}: {e}")
 
 
 @app.get("/progress/{task_id}")
-async def get_progress(task_id: str):
-    """Получение прогресса по задаче"""
-    task_info = task_manager.get_task_info(task_id)
+async def get_progress(
+    task_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    client_id: Optional[str] = Query(default=None),
+):
+    """Получение прогресса по задаче."""
+    user_id = _resolve_client_id(x_client_id=x_client_id, client_id=client_id)
 
+    task_info = task_manager.get_task_info_for_user(user_id=user_id, task_id=task_id)
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -294,37 +439,60 @@ async def get_progress(task_id: str):
         "percent": task_info["percent"],
         "current_stage": task_info["current_stage"],
         "current_stage_display": task_info.get("current_stage_display", {}),
-        "logs": task_info["logs"][-10:],  # Последние 10 логов
+        "logs": task_info["logs"][-10:],
         "result": task_info.get("result"),
         "error": task_info.get("error"),
+        "file_name": task_info.get("file_name"),
+        "batch_id": task_info.get("batch_id"),
+        "order_index": task_info.get("order_index"),
+        "total_in_batch": task_info.get("total_in_batch"),
+        "summary_type": task_info.get("summary_type"),
     }
 
 
+@app.get("/batch/progress/{batch_id}")
+async def get_batch_progress(
+    batch_id: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    client_id: Optional[str] = Query(default=None),
+):
+    """Прогресс пакетной обработки (текущий/следующий файл + список задач)."""
+    user_id = _resolve_client_id(x_client_id=x_client_id, client_id=client_id)
+
+    batch_info = task_manager.get_batch_info_for_user(user_id=user_id, batch_id=batch_id)
+    if not batch_info:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    return batch_info
+
+
 @app.get("/download/{task_id}/{file_type}")
-async def download_file(task_id: str, file_type: str):
-    """Скачивание результатов"""
-    logger.info(f"Запрос на скачивание: task_id={task_id}, file_type={file_type}")
+async def download_file(
+    task_id: str,
+    file_type: str,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    client_id: Optional[str] = Query(default=None),
+):
+    """Скачивание результатов (из директории пользователя)."""
+    user_id = _resolve_client_id(x_client_id=x_client_id, client_id=client_id)
+
+    logger.info(
+        f"Запрос на скачивание: task_id={task_id}, file_type={file_type}, user_id={user_id}"
+    )
 
     if file_type == "summary":
         filename = f"{task_id}_summary.md"
-        file_path = f"{RESULTS_DIR}/{filename}"
     elif file_type == "transcription":
         filename = f"{task_id}_transcription.md"
-        file_path = f"{RESULTS_DIR}/{filename}"
     else:
         logger.error(f"Неизвестный тип файла: {file_type}")
-        raise HTTPException(404, "Тип файла не поддерживается")
+        raise HTTPException(status_code=404, detail="Тип файла не поддерживается")
 
-    # Проверяем существование файла
+    file_path = os.path.join(RESULTS_DIR, user_id, filename)
+
     if not os.path.exists(file_path):
         logger.error(f"Файл не найден: {file_path}")
-        # Проверим, есть ли файлы в директории results
-        try:
-            files = os.listdir(RESULTS_DIR)
-            logger.info(f"Файлы в директории results: {files}")
-        except Exception as e:
-            logger.error(f"Ошибка при чтении директории results: {e}")
-        raise HTTPException(404, "Файл не найден")
+        raise HTTPException(status_code=404, detail="Файл не найден")
 
     logger.info(f"Файл найден, отправка: {file_path}")
     return FileResponse(path=file_path, media_type="text/markdown", filename=filename)

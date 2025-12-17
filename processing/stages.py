@@ -5,6 +5,14 @@
 
 # Справочник этапов с полной информацией
 PROCESSING_STAGES = {
+    # Ожидание
+    "queued": {
+        "order": 0,
+        "display_name": "В очереди",
+        "description": "Ожидание начала обработки",
+        "icon": "⏳"
+    },
+
     # Инициализация и подготовка
     "initialization": {
         "order": 1,
