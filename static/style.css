@@ -136,12 +136,6 @@ body {
     background: #f0f7ff;
 }
 
-.file-upload-icon {
-    font-size: 48px;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-}
-
 .file-upload-text {
     color: var(--text-primary);
     font-size: 15px;
@@ -183,18 +177,9 @@ body {
     position: relative;
 }
 
-.url-icon {
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--text-secondary);
-    font-size: 18px;
-}
-
 #url-input {
     width: 100%;
-    padding: 12px 12px 12px 40px;
+    padding: 12px 12px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     font-size: 14px;
@@ -276,26 +261,13 @@ body {
 .stage-display {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 24px;
     margin-bottom: 32px;
     padding: 24px;
     background: var(--bg-white);
     border-radius: 10px;
     border: 1px solid var(--border-color);
-}
-
-.stage-icon {
-    font-size: 48px;
-    line-height: 1;
-    min-width: 48px;
-    text-align: center;
-    animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.05); }
 }
 
 .stage-content {

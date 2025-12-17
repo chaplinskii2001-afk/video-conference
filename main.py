@@ -371,19 +371,19 @@ async def process_media_background(
 
     try:
         task_manager.update_progress(
-            task_id, 5, "initialization", f"Начало обработки {media_type}"
+            task_id, 2, "initialization", f"Начало обработки {media_type}"
         )
 
         if local_path:
             task_manager.update_progress(
                 task_id,
-                10,
+                5,
                 "download",
                 f"Файл загружен: {os.path.basename(local_path)}",
             )
         elif url:
             task_manager.update_progress(
-                task_id, 10, "download", f"Скачивание по URL: {url}"
+                task_id, 5, "download", f"Скачивание по URL: {url}"
             )
             local_path = await processor.download_from_url(url, task_id)
         else:
@@ -391,7 +391,7 @@ async def process_media_background(
 
         task_manager.update_progress(
             task_id,
-            15,
+            10,
             "preprocessing",
             f"Подготовка к обработке {media_type} (суммаризация: {summary_type})",
         )

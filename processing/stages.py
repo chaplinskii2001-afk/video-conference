@@ -9,106 +9,92 @@ PROCESSING_STAGES = {
     "queued": {
         "order": 0,
         "display_name": "В очереди",
-        "description": "Ожидание начала обработки",
-        "icon": "⏳"
+        "description": "Ожидание начала обработки"
     },
 
     # Инициализация и подготовка
     "initialization": {
         "order": 1,
         "display_name": "Начало обработки задачи",
-        "description": "Инициализация системы",
-        "icon": "🚀"
+        "description": "Инициализация системы"
     },
     "download": {
         "order": 2,
         "display_name": "Подготовка файла",
-        "description": "Скачивание или сохранение файла",
-        "icon": "📥"
+        "description": "Скачивание или сохранение файла"
     },
     "preprocessing": {
         "order": 3,
         "display_name": "Подготовка файла",
-        "description": "Подготовка к обработке",
-        "icon": "⚙️"
+        "description": "Подготовка к обработке"
     },
     
     # Работа с аудио
     "audio_extraction": {
         "order": 4,
         "display_name": "Извлечение аудиодорожки",
-        "description": "Извлечение звука из видео",
-        "icon": "🎵"
+        "description": "Извлечение звука из видео"
     },
     "audio_conversion": {
         "order": 4,
         "display_name": "Конвертация аудио",
-        "description": "Подготовка аудиофайла",
-        "icon": "🎵"
+        "description": "Подготовка аудиофайла"
     },
     
     # Загрузка моделей
     "loading_models": {
         "order": 5,
         "display_name": "Загрузка моделей ИИ",
-        "description": "Подготовка нейросетей",
-        "icon": "🤖"
+        "description": "Подготовка нейросетей"
     },
     
     # Параллельная обработка транскрипции и диаризации
     "transcription_and_diarization": {
         "order": 6,
         "display_name": "Параллельная обработка",
-        "description": "Распознавание речи (Whisper) и определение спикеров (PyAnnote) одновременно",
-        "icon": "⚡"
+        "description": "Распознавание речи (Whisper) и определение спикеров (PyAnnote) одновременно"
     },
     
     # Транскрипция (отдельно, для обратной совместимости)
     "transcription": {
         "order": 6,
         "display_name": "Транскрипция речи",
-        "description": "Распознавание речи (Whisper)",
-        "icon": "🎤"
+        "description": "Распознавание речи (Whisper)"
     },
     
     # Диаризация (отдельно, для обратной совместимости)
     "diarization": {
         "order": 7,
         "display_name": "Определение спикеров",
-        "description": "Разделение по говорящим людям (PyAnnote)",
-        "icon": "👥"
+        "description": "Разделение по говорящим людям (PyAnnote)"
     },
     
     # Объединение результатов
     "merging": {
         "order": 7,
         "display_name": "Объединение результатов",
-        "description": "Согласование транскрипции и спикеров",
-        "icon": "🔗"
+        "description": "Согласование транскрипции и спикеров"
     },
     
     # Суммаризация
     "summarization": {
         "order": 8,
         "display_name": "Создание документа",
-        "description": "Написание краткого содержания (Qwen)",
-        "icon": "📝"
+        "description": "Написание краткого содержания (Qwen)"
     },
     
     # Сохранение
     "saving": {
         "order": 9,
         "display_name": "Сохранение результатов",
-        "description": "Финализация и сохранение",
-        "icon": "💾"
+        "description": "Финализация и сохранение"
     },
     
     # Завершение
     "completed": {
         "order": 10,
         "display_name": "Обработка завершена",
-        "description": "Успешно завершено",
-        "icon": "✅"
+        "description": "Успешно завершено"
     }
 }
 
@@ -121,7 +107,7 @@ def get_display_stage(technical_stage: str) -> dict:
         technical_stage: техническое имя этапа
         
     Returns:
-        dict с display_name, description, icon и order
+        dict с display_name, description и order
     """
     if technical_stage in PROCESSING_STAGES:
         return PROCESSING_STAGES[technical_stage]
@@ -130,8 +116,7 @@ def get_display_stage(technical_stage: str) -> dict:
     return {
         "order": 0,
         "display_name": "Обработка",
-        "description": technical_stage,
-        "icon": "⏳"
+        "description": technical_stage
     }
 
 
