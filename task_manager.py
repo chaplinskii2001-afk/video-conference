@@ -1,6 +1,7 @@
 import uuid
 import json
 import os
+import time
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta, timezone
 import logging
@@ -26,6 +27,8 @@ class TaskManager:
         self.batch_to_user: Dict[str, str] = {}
 
         self.cleanup_interval = 300  # 5 минут
+        self.last_cleanup_time = time.time()
+        
         self.storage_file = "results/tasks.json"
         # Ensure directory exists
         os.makedirs(os.path.dirname(self.storage_file), exist_ok=True)
@@ -37,7 +40,7 @@ class TaskManager:
         return datetime.now(tomsk_tz)
 
     def save_state(self):
-        """Сохраняет текущее состояние в файл."""
+        """Сохраняет текущее состояние в файл (атомарно)."""
         try:
             state = {
                 "tasks_by_user": self.tasks_by_user,
@@ -45,8 +48,11 @@ class TaskManager:
                 "batches_by_user": self.batches_by_user,
                 "batch_to_user": self.batch_to_user,
             }
-            with open(self.storage_file, "w", encoding="utf-8") as f:
+            # Write to tmp file then rename to ensure atomicity
+            tmp_file = self.storage_file + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(state, f, cls=DateTimeEncoder, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, self.storage_file)
         except Exception as e:
             logger.error(f"Ошибка при сохранении состояния задач: {e}")
 
@@ -76,8 +82,12 @@ class TaskManager:
                     if task.get("status") == "processing":
                         task["status"] = "error"
                         task["error"] = "Сервер был перезагружен во время обработки"
+                        timestamp = self._get_tomsk_time().strftime('%H:%M:%S')
+                        # Ensure logs list exists
+                        if "logs" not in task:
+                            task["logs"] = []
                         task["logs"].append(
-                            f"[{self._get_tomsk_time().strftime('%H:%M:%S')}] Ошибка: Сервер был перезагружен"
+                            f"[{timestamp}] Ошибка: Сервер был перезагружен"
                         )
                         logger.warning(f"Задача {task_id} помечена как прерванная из-за перезагрузки")
 
@@ -103,6 +113,12 @@ class TaskManager:
         if user_id not in self.batches_by_user:
             self.batches_by_user[user_id] = {}
 
+    def _check_cleanup(self):
+        """Проверяет необходимость очистки старых задач."""
+        if time.time() - self.last_cleanup_time > self.cleanup_interval:
+            self.cleanup_old_tasks()
+            self.last_cleanup_time = time.time()
+
     def create_task(
         self,
         *,
@@ -116,6 +132,8 @@ class TaskManager:
         total_in_batch: int = None,
     ) -> str:
         """Создает новую задачу и возвращает её ID."""
+        self._check_cleanup()
+
         if task_id is None:
             task_id = str(uuid.uuid4())
 
@@ -153,6 +171,8 @@ class TaskManager:
         summary_type: str = "standard",
     ) -> Tuple[str, List[Dict]]:
         """Создает батч и задачи для каждого элемента в указанном порядке."""
+        # _check_cleanup called inside create_task
+
         self._ensure_user(user_id)
 
         batch_id = str(uuid.uuid4())
