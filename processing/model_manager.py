@@ -87,17 +87,21 @@ class ModelManager:
     
     # ==================== WHISPER ====================
     
-    async def load_whisper(self) -> bool:
+    async def load_whisper(self, skip_unload: bool = False) -> bool:
         """
         Загрузка модели Whisper для транскрипции
         Использует квантование на основе доступной GPU памяти
+        
+        Args:
+            skip_unload: если True, не выгружает текущую модель (для параллельной загрузки)
         """
-        if self.whisper_pipeline is not None and self.current_loaded_model == "whisper":
+        if self.whisper_pipeline is not None:
             self.logger.info("Whisper уже загружен")
             return True
         
-        # Выгружаем другие модели
-        await self.unload_current_model()
+        # Выгружаем другие модели только если это не параллельная загрузка
+        if not skip_unload:
+            await self.unload_current_model()
         
         self.logger.info("Загрузка Whisper модели...")
         self.gpu_manager.take_snapshot("before_whisper")
@@ -165,7 +169,9 @@ class ModelManager:
                 return_timestamps=True,
             )
             
-            self.current_loaded_model = "whisper"
+            # Обновляем current_loaded_model только если это не параллельная загрузка
+            if not skip_unload:
+                self.current_loaded_model = "whisper"
             self.gpu_manager.take_snapshot("after_whisper")
             
             self.logger.info("✅ Whisper загружен успешно")
@@ -217,16 +223,20 @@ class ModelManager:
 
     # ==================== PYANNOTE (DIARIZATION) ====================
     
-    async def load_diarization(self) -> bool:
+    async def load_diarization(self, skip_unload: bool = False) -> bool:
         """
         Загрузка модели PyAnnote для диаризации спикеров
+        
+        Args:
+            skip_unload: если True, не выгружает текущую модель (для параллельной загрузки)
         """
-        if self.diarization_pipeline is not None and self.current_loaded_model == "diarization":
+        if self.diarization_pipeline is not None:
             self.logger.info("PyAnnote уже загружен")
             return True
         
-        # Выгружаем другие модели
-        await self.unload_current_model()
+        # Выгружаем другие модели только если это не параллельная загрузка
+        if not skip_unload:
+            await self.unload_current_model()
         
         self.logger.info("Загрузка PyAnnote модели...")
         self.gpu_manager.take_snapshot("before_diarization")
@@ -251,7 +261,9 @@ class ModelManager:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
-            self.current_loaded_model = "diarization"
+            # Обновляем current_loaded_model только если это не параллельная загрузка
+            if not skip_unload:
+                self.current_loaded_model = "diarization"
             self.gpu_manager.take_snapshot("after_diarization")
             
             self.logger.info("✅ PyAnnote загружен успешно")
@@ -375,6 +387,29 @@ class ModelManager:
             
         except Exception as e:
             self.logger.warning(f"Ошибка при выгрузке модели: {e}")
+    
+    async def unload_whisper_and_diarization(self):
+        """Выгрузка Whisper и PyAnnote моделей (используется после параллельной обработки)"""
+        self.logger.info("Выгрузка моделей Whisper и PyAnnote")
+        
+        try:
+            if self.whisper_pipeline:
+                del self.whisper_pipeline
+                del self.whisper_processor
+            if self.diarization_pipeline:
+                del self.diarization_pipeline
+            
+            self.whisper_pipeline = None
+            self.whisper_processor = None
+            self.diarization_pipeline = None
+            
+            if self.current_loaded_model in ("whisper", "diarization"):
+                self.current_loaded_model = None
+            
+            await self.gpu_manager.cleanup("standard")
+            
+        except Exception as e:
+            self.logger.warning(f"Ошибка при выгрузке моделей: {e}")
     
     async def unload_all_models(self):
         """Выгрузка всех моделей"""
