@@ -211,7 +211,7 @@ class ModelManager:
             )
 
     def whisper_transcribe(self, audio_path: str) -> Dict:
-        if self.whisper_pipeline is None or self.current_loaded_model != "whisper":
+        if self.whisper_pipeline is None:
             raise RuntimeError("Whisper pipeline не загружен")
 
         self._enforce_max_audio_length(audio_path)
