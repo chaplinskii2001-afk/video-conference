@@ -95,8 +95,8 @@ function renderCompletedResults() {
             <div class="completed-item">
                 <div class="completed-name">${safeName}</div>
                 <div class="completed-links">
-                    <a class="download-link" href="${summaryUrl}" target="_blank" rel="noopener">📄 Краткое содержание</a>
-                    <a class="download-link secondary" href="${transcriptionUrl}" target="_blank" rel="noopener">📝 Расшифровка</a>
+                    <a class="download-link" href="${summaryUrl}" target="_blank" rel="noopener">Краткое содержание</a>
+                    <a class="download-link secondary" href="${transcriptionUrl}" target="_blank" rel="noopener">Расшифровка</a>
                 </div>
             </div>
         `;
@@ -183,7 +183,7 @@ function renderSelectedFiles() {
                 <div class="file-actions">
                     <button class="icon-btn" onclick="moveFile(${i}, -1)" ${upDisabled} title="Выше">↑</button>
                     <button class="icon-btn" onclick="moveFile(${i}, 1)" ${downDisabled} title="Ниже">↓</button>
-                    <button class="icon-btn" onclick="removeFile(${i})" title="Убрать">✕</button>
+                    <button class="icon-btn" onclick="removeFile(${i})" title="Убрать">×</button>
                 </div>
             </div>
         `;
@@ -229,7 +229,6 @@ function resetProgress() {
     document.getElementById('progress-percentage').textContent = '0%';
     document.getElementById('current-stage-name').textContent = 'В очереди';
     document.getElementById('stage-description').textContent = 'Ожидание начала обработки';
-    document.getElementById('stage-icon').textContent = '⏳';
 
     document.getElementById('batch-current-file').textContent = '—';
     document.getElementById('batch-next-file').textContent = '—';
@@ -281,7 +280,6 @@ function updateStageDisplay(stageDisplay) {
 
     document.getElementById('current-stage-name').textContent = stageDisplay.display_name || 'Обработка';
     document.getElementById('stage-description').textContent = stageDisplay.description || '';
-    document.getElementById('stage-icon').textContent = stageDisplay.icon || '⏳';
 }
 
 function handleBatchProgress(batchInfo) {
