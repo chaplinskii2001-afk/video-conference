@@ -1,11 +1,21 @@
 import uuid
-from typing import Dict, List, Optional, Tuple
+import json
+import os
+import time
+from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta, timezone
 import logging
 
 from processing.stages import get_display_stage
 
 logger = logging.getLogger(__name__)
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class TaskManager:
@@ -17,17 +27,97 @@ class TaskManager:
         self.batch_to_user: Dict[str, str] = {}
 
         self.cleanup_interval = 300  # 5 минут
+        self.last_cleanup_time = time.time()
+        
+        self.storage_file = "results/tasks.json"
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.storage_file), exist_ok=True)
+        self.load_state()
 
     def _get_tomsk_time(self):
         """Получение текущего времени в Томске (UTC+7)."""
         tomsk_tz = timezone(timedelta(hours=7))
         return datetime.now(tomsk_tz)
 
+    def save_state(self):
+        """Сохраняет текущее состояние в файл (атомарно)."""
+        try:
+            state = {
+                "tasks_by_user": self.tasks_by_user,
+                "task_to_user": self.task_to_user,
+                "batches_by_user": self.batches_by_user,
+                "batch_to_user": self.batch_to_user,
+            }
+            # Write to tmp file then rename to ensure atomicity
+            tmp_file = self.storage_file + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, cls=DateTimeEncoder, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, self.storage_file)
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении состояния задач: {e}")
+
+    def load_state(self):
+        """Загружает состояние из файла."""
+        if not os.path.exists(self.storage_file):
+            return
+
+        try:
+            with open(self.storage_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+
+            # Восстанавливаем словари
+            self.task_to_user = state.get("task_to_user", {})
+            self.batch_to_user = state.get("batch_to_user", {})
+
+            # Восстанавливаем tasks_by_user и конвертируем даты обратно
+            self.tasks_by_user = state.get("tasks_by_user", {})
+            for user_id, tasks in self.tasks_by_user.items():
+                for task_id, task in tasks.items():
+                    if "start_time" in task and task["start_time"]:
+                        task["start_time"] = datetime.fromisoformat(task["start_time"])
+                    if "end_time" in task and task["end_time"]:
+                        task["end_time"] = datetime.fromisoformat(task["end_time"])
+
+                    # Если задача была "в работе", помечаем как ошибку (сервер перезагрузился)
+                    if task.get("status") == "processing":
+                        task["status"] = "error"
+                        task["error"] = "Сервер был перезагружен во время обработки"
+                        timestamp = self._get_tomsk_time().strftime('%H:%M:%S')
+                        # Ensure logs list exists
+                        if "logs" not in task:
+                            task["logs"] = []
+                        task["logs"].append(
+                            f"[{timestamp}] Ошибка: Сервер был перезагружен"
+                        )
+                        logger.warning(f"Задача {task_id} помечена как прерванная из-за перезагрузки")
+
+            # Восстанавливаем batches_by_user и конвертируем даты
+            self.batches_by_user = state.get("batches_by_user", {})
+            for user_id, batches in self.batches_by_user.items():
+                for batch_id, batch in batches.items():
+                    if "created_at" in batch and batch["created_at"]:
+                        batch["created_at"] = datetime.fromisoformat(batch["created_at"])
+
+            logger.info("Состояние задач успешно восстановлено")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке состояния задач: {e}")
+            # В случае ошибки начинаем с чистого листа
+            self.tasks_by_user = {}
+            self.task_to_user = {}
+            self.batches_by_user = {}
+            self.batch_to_user = {}
+
     def _ensure_user(self, user_id: str):
         if user_id not in self.tasks_by_user:
             self.tasks_by_user[user_id] = {}
         if user_id not in self.batches_by_user:
             self.batches_by_user[user_id] = {}
+
+    def _check_cleanup(self):
+        """Проверяет необходимость очистки старых задач."""
+        if time.time() - self.last_cleanup_time > self.cleanup_interval:
+            self.cleanup_old_tasks()
+            self.last_cleanup_time = time.time()
 
     def create_task(
         self,
@@ -42,6 +132,8 @@ class TaskManager:
         total_in_batch: int = None,
     ) -> str:
         """Создает новую задачу и возвращает её ID."""
+        self._check_cleanup()
+
         if task_id is None:
             task_id = str(uuid.uuid4())
 
@@ -68,6 +160,7 @@ class TaskManager:
 
         self.task_to_user[task_id] = user_id
         logger.info(f"Создана новая задача: {task_id} (user_id={user_id})")
+        self.save_state()
         return task_id
 
     def create_batch(
@@ -78,6 +171,8 @@ class TaskManager:
         summary_type: str = "standard",
     ) -> Tuple[str, List[Dict]]:
         """Создает батч и задачи для каждого элемента в указанном порядке."""
+        # _check_cleanup called inside create_task
+
         self._ensure_user(user_id)
 
         batch_id = str(uuid.uuid4())
@@ -117,6 +212,7 @@ class TaskManager:
         logger.info(
             f"Создан батч {batch_id} (user_id={user_id}, items={len(batch_items)})"
         )
+        self.save_state()
         return batch_id, batch_items
 
     def task_belongs_to_user(self, *, user_id: str, task_id: str) -> bool:
@@ -155,6 +251,7 @@ class TaskManager:
         logger.debug(
             f"Обновлен прогресс задачи {task_id}: {percent}%, этап: {stage}"
         )
+        self.save_state()
 
     def complete_task(self, task_id: str, result: Dict):
         """Отмечает задачу как завершенную."""
@@ -178,6 +275,7 @@ class TaskManager:
         task["logs"].append(f"[{timestamp}] Обработка успешно завершена")
 
         logger.info(f"Задача {task_id} завершена успешно")
+        self.save_state()
 
     def fail_task(self, task_id: str, error_message: str):
         """Отмечает задачу как завершенную с ошибкой."""
@@ -200,6 +298,7 @@ class TaskManager:
         task["logs"].append(f"[{timestamp}] Ошибка: {error_message}")
 
         logger.error(f"Задача {task_id} завершена с ошибкой: {error_message}")
+        self.save_state()
 
     def get_task_info(self, task_id: str) -> Optional[Dict]:
         """Возвращает информацию о задаче (без проверки прав)."""
@@ -306,6 +405,8 @@ class TaskManager:
             self.batches_by_user.get(user_id, {}).pop(batch_id, None)
             self.batch_to_user.pop(batch_id, None)
             logger.info(f"Удален старый батч: {batch_id} (user_id={user_id})")
+        
+        self.save_state()
 
 
 # Глобальный экземпляр менеджера задач

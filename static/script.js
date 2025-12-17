@@ -131,7 +131,10 @@ function setFileInputFiles(files) {
 }
 
 function onFilesSelected(files) {
-    selectedFiles = Array.from(files);
+    const newFiles = Array.from(files);
+    // Filter duplicates by name if needed, or just append
+    // Here we just append all selected files to the existing list
+    selectedFiles = selectedFiles.concat(newFiles);
     setFileInputFiles(selectedFiles);
     renderSelectedFiles();
 }
