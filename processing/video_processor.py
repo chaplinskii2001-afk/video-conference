@@ -858,6 +858,7 @@ class VideoProcessor:
 **ID задачи**: {task_id}
 **Дата**: {tomsk_time.strftime('%Y-%m-%d %H:%M:%S')} (Томск, UTC+7)
 **Время обработки**: {processing_time:.2f} мин
+**Длительность аудио**: {((stats.get('audio_duration_seconds') or 0) / 60):.1f} мин
 **Тип медиа**: {media_type}
 **Сегментов**: {stats.get('segments_count', 0)}
 **Спикеров**: {stats.get('speakers_count', 0)}
@@ -886,16 +887,29 @@ class VideoProcessor:
     
     # ==================== ПАРАЛЛЕЛЬНАЯ ОБРАБОТКА ====================
     
-    async def process_transcription_and_diarization_parallel(self, audio_path: str) -> tuple:
-        """
-        Параллельная обработка транскрипции и диаризации
-        Загружает обе модели и запускает их одновременно для экономии времени
-        
+    async def process_transcription_and_diarization_parallel(
+        self,
+        audio_path: str,
+        *,
+        audio_duration_seconds: Optional[float] = None,
+    ) -> tuple:
+        """Параллельная обработка транскрипции и диаризации.
+
+        Загружает обе модели и запускает их одновременно для экономии времени.
+
         Returns:
             кортеж (transcription_segments, diarization_segments)
         """
+        duration_hint = ""
+        if isinstance(audio_duration_seconds, (int, float)) and audio_duration_seconds > 0:
+            duration_hint = f" (длительность аудио: {audio_duration_seconds / 60:.1f} мин)"
+
         # Этап 2: Загружаем AI модели
-        self._update_progress(10, "loading_ai_models", "Загрузка моделей Whisper и PyAnnote...")
+        self._update_progress(
+            10,
+            "loading_ai_models",
+            f"Загрузка моделей Whisper и PyAnnote...{duration_hint}",
+        )
         self.logger.info("Запуск параллельной обработки транскрипции и диаризации")
         self.logger.info("Загрузка модели Whisper...")
         
@@ -922,9 +936,14 @@ class VideoProcessor:
             transcription_segments, diarization_segments = await asyncio.gather(
                 self._transcribe_audio_parallel(audio_path),
                 self._diarize_audio_parallel(audio_path),
-                return_exceptions=False
+                return_exceptions=False,
             )
-            
+
+            # Важно: обновляем этапы завершения только ПОСЛЕ того как завершились ОБА процесса,
+            # иначе пользователь может увидеть "Диаризация завершена" пока транскрипция еще идет (или наоборот).
+            self._update_progress(50, "transcription_completed", "Транскрипция завершена")
+            self._update_progress(55, "diarization_completed", "Диаризация завершена")
+
             self.logger.info("Параллельная обработка завершена")
             return transcription_segments, diarization_segments
             
@@ -956,8 +975,6 @@ class VideoProcessor:
                     "text": result.get("text", "")
                 })
             
-            # Этап 4: Транскрипция завершена
-            self._update_progress(50, "transcription_completed", "Распознавание речи выполнено")
             self.logger.info(f"✅ Транскрипция завершена: {len(segments)} сегментов")
             self.gpu_manager.take_snapshot("after_transcription")
             
@@ -1014,8 +1031,6 @@ class VideoProcessor:
                     "speaker": speaker
                 })
             
-            # Этап 5: Диаризация завершена
-            self._update_progress(55, "diarization_completed", "Определение спикеров выполнено")
             self.logger.info(f"✅ Диаризация завершена: {len(result)} сегментов")
             self.gpu_manager.take_snapshot("after_diarization")
             
@@ -1064,15 +1079,27 @@ class VideoProcessor:
             self.gpu_manager.take_snapshot("initial")
             
             # ПОДГОТОВКА АУДИО
-            self._update_progress(5, "task_started", "Подготовка аудиофайла...")
+            self._update_progress(5, "preparing_audio", "Подготовка аудиофайла...")
             self.logger.info("Подготовка аудиофайла...")
             if media_type == "audio":
                 audio_path = self.process_audio_file(file_path, task_id)
             else:
                 audio_path = self.extract_audio(file_path, task_id)
 
+            audio_duration_seconds = None
+            try:
+                info = torchaudio.info(audio_path)
+                sample_rate = getattr(info, "sample_rate", None)
+                if sample_rate:
+                    audio_duration_seconds = info.num_frames / sample_rate
+            except Exception as e:
+                self.logger.warning(f"Не удалось определить длительность аудио: {e}")
+
             # ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ (этапы 2-5)
-            transcription_segments, diarization_segments = await self.process_transcription_and_diarization_parallel(audio_path)
+            transcription_segments, diarization_segments = await self.process_transcription_and_diarization_parallel(
+                audio_path,
+                audio_duration_seconds=audio_duration_seconds,
+            )
             
             # ОБЪЕДИНЕНИЕ (внутри этапа 5, не показываем отдельно)
             aligned_segments = self.align_transcription_and_diarization(
@@ -1097,9 +1124,10 @@ class VideoProcessor:
             stats = {
                 "segments_count": len(aligned_segments),
                 "speakers_count": speakers_count,
+                "audio_duration_seconds": audio_duration_seconds,
                 "peak_gpu_usage": gpu_stats.get("peak_usage_gb", 0),
                 "peak_gpu_percent": gpu_stats.get("peak_usage_percent", 0),
-                "peak_stage": gpu_stats.get("peak_stage", "unknown")
+                "peak_stage": gpu_stats.get("peak_stage", "unknown"),
             }
             
             # Добавляем метаданные
@@ -1140,6 +1168,9 @@ class VideoProcessor:
                 "segments_count": len(aligned_segments),
                 "speakers_count": speakers_count,
                 "processing_time_minutes": round(processing_time, 2),
+                "audio_duration_seconds": round(audio_duration_seconds, 2)
+                if isinstance(audio_duration_seconds, (int, float))
+                else None,
                 "media_type": media_type,
                 "gpu_peak_usage_gb": gpu_stats.get("peak_usage_gb", 0),
             }
@@ -1149,7 +1180,6 @@ class VideoProcessor:
             self.logger.error(f"КРИТИЧЕСКАЯ ОШИБКА В ЗАДАЧЕ: {task_id}")
             self.logger.error(f"Ошибка: {e}", exc_info=True)
             self.logger.error("=" * 60)
-            self._update_progress(0, "error", str(e))
             raise
             
         finally:

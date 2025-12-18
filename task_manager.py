@@ -80,8 +80,15 @@ class TaskManager:
 
                     # Если задача была "в работе", помечаем как ошибку (сервер перезагрузился)
                     if task.get("status") == "processing":
+                        error_message = "Сервер был перезагружен во время обработки"
                         task["status"] = "error"
-                        task["error"] = "Сервер был перезагружен во время обработки"
+                        task["current_stage"] = "error"
+                        stage_display = get_display_stage("error")
+                        stage_display["description"] = error_message
+                        task["current_stage_display"] = stage_display
+                        task["current_message"] = error_message
+                        task["error"] = error_message
+
                         timestamp = self._get_tomsk_time().strftime('%H:%M:%S')
                         # Ensure logs list exists
                         if "logs" not in task:
@@ -146,6 +153,7 @@ class TaskManager:
             "percent": 0,
             "current_stage": "queued",
             "current_stage_display": get_display_stage("queued"),
+            "current_message": None,
             "logs": [],
             "start_time": self._get_tomsk_time(),
             "result": None,
@@ -238,7 +246,13 @@ class TaskManager:
 
         task["percent"] = percent
         task["current_stage"] = stage
-        task["current_stage_display"] = get_display_stage(stage)
+
+        stage_display = get_display_stage(stage)
+        if log_message:
+            stage_display["description"] = log_message
+            task["current_message"] = log_message
+        task["current_stage_display"] = stage_display
+
         task["status"] = "processing"
 
         if log_message:
@@ -260,12 +274,32 @@ class TaskManager:
             logger.warning(f"Попытка завершить несуществующую задачу: {task_id}")
             return
 
+        completion_message = "Обработка успешно завершена"
+        try:
+            processing_time = result.get("processing_time_minutes")
+            audio_duration_seconds = result.get("audio_duration_seconds")
+
+            parts = []
+            if isinstance(processing_time, (int, float)):
+                parts.append(f"Время обработки: {processing_time:.2f} мин")
+            if isinstance(audio_duration_seconds, (int, float)):
+                parts.append(f"Длительность аудио: {audio_duration_seconds / 60:.1f} мин")
+
+            if parts:
+                completion_message = " • ".join(parts)
+        except Exception:
+            pass
+
+        stage_display = get_display_stage("task_completed")
+        stage_display["description"] = completion_message
+
         task.update(
             {
                 "status": "completed",
                 "percent": 100,
-                "current_stage": "completed",
-                "current_stage_display": get_display_stage("completed"),
+                "current_stage": "task_completed",
+                "current_stage_display": stage_display,
+                "current_message": completion_message,
                 "result": result,
                 "end_time": self._get_tomsk_time(),
             }
@@ -286,9 +320,15 @@ class TaskManager:
             )
             return
 
+        stage_display = get_display_stage("error")
+        stage_display["description"] = error_message
+
         task.update(
             {
                 "status": "error",
+                "current_stage": "error",
+                "current_stage_display": stage_display,
+                "current_message": error_message,
                 "error": error_message,
                 "end_time": self._get_tomsk_time(),
             }
