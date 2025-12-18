@@ -267,20 +267,6 @@ class ModelManager:
                 # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
-                
-                # Оптимизация: использование float16 для ускорения
-                try:
-                    # Переводим все модели в float16
-                    if hasattr(self.diarization_pipeline, '_segmentation'):
-                        if hasattr(self.diarization_pipeline._segmentation.model, 'half'):
-                            self.diarization_pipeline._segmentation.model.half()
-                            self.logger.info("PyAnnote segmentation модель переведена в float16")
-                    if hasattr(self.diarization_pipeline, '_embedding'):
-                        if hasattr(self.diarization_pipeline._embedding.model_, 'half'):
-                            self.diarization_pipeline._embedding.model_.half()
-                            self.logger.info("PyAnnote embedding модель переведена в float16")
-                except Exception as e:
-                    self.logger.warning(f"Не удалось включить float16 для PyAnnote: {e}")
             
             # Оптимизация параметров диаризации для скорости
             # Увеличиваем batch_size для embedding (ускоряет обработку)
