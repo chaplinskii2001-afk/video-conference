@@ -897,14 +897,20 @@ class VideoProcessor:
         # Этап 2: Загружаем AI модели
         self._update_progress(10, "loading_ai_models", "Загрузка моделей Whisper и PyAnnote...")
         self.logger.info("Запуск параллельной обработки транскрипции и диаризации")
+        self.logger.info("Загрузка модели Whisper...")
         
         try:
-            # Загружаем обе модели параллельно
+            # Загружаем Whisper
             whisper_result = await self.model_manager.load_whisper(skip_unload=True)
-            diarization_result = await self.model_manager.load_diarization(skip_unload=True)
-            
             if not whisper_result:
                 raise Exception("Не удалось загрузить Whisper модель")
+            
+            # Обновляем прогресс после загрузки Whisper
+            self._update_progress(12, "loading_ai_models", "Whisper загружен, загрузка PyAnnote...")
+            self.logger.info("Загрузка модели PyAnnote...")
+            
+            # Загружаем PyAnnote
+            diarization_result = await self.model_manager.load_diarization(skip_unload=True)
             if not diarization_result:
                 raise Exception("Не удалось загрузить PyAnnote модель")
             
@@ -932,6 +938,7 @@ class VideoProcessor:
     async def _transcribe_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной транскрипции"""
         try:
+            self.logger.info("Начало транскрипции аудио (Whisper)...")
             result = self.model_manager.whisper_transcribe(audio_path)
             segments = []
             
@@ -951,7 +958,7 @@ class VideoProcessor:
             
             # Этап 4: Транскрипция завершена
             self._update_progress(50, "transcription_completed", "Распознавание речи выполнено")
-            self.logger.info(f"Транскрипция завершена: {len(segments)} сегментов")
+            self.logger.info(f"✅ Транскрипция завершена: {len(segments)} сегментов")
             self.gpu_manager.take_snapshot("after_transcription")
             
             return segments
@@ -963,6 +970,7 @@ class VideoProcessor:
     async def _diarize_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной диаризации"""
         try:
+            self.logger.info("Начало диаризации аудио (PyAnnote)...")
             # Загружаем аудио в память
             waveform, sample_rate = torchaudio.load(audio_path)
             
@@ -984,7 +992,7 @@ class VideoProcessor:
             if torch.cuda.is_available():
                 waveform = waveform.to("cuda")
             
-            self.logger.info(f"Аудио подготовлено: shape={waveform.shape}")
+            self.logger.info(f"Аудио подготовлено для диаризации: shape={waveform.shape}")
 
             # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
             if torch.cuda.is_available():
@@ -1008,7 +1016,7 @@ class VideoProcessor:
             
             # Этап 5: Диаризация завершена
             self._update_progress(55, "diarization_completed", "Определение спикеров выполнено")
-            self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
+            self.logger.info(f"✅ Диаризация завершена: {len(result)} сегментов")
             self.gpu_manager.take_snapshot("after_diarization")
             
             # Очистка
@@ -1055,7 +1063,9 @@ class VideoProcessor:
             await self.gpu_manager.cleanup("standard")
             self.gpu_manager.take_snapshot("initial")
             
-            # ПОДГОТОВКА АУДИО (внутри этапа 1, не показываем пользователю)
+            # ПОДГОТОВКА АУДИО
+            self._update_progress(5, "task_started", "Подготовка аудиофайла...")
+            self.logger.info("Подготовка аудиофайла...")
             if media_type == "audio":
                 audio_path = self.process_audio_file(file_path, task_id)
             else:
