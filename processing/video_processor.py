@@ -254,13 +254,10 @@ class VideoProcessor:
         self.logger.info(f"Начало транскрипции: {audio_path}")
         self.gpu_manager.take_snapshot("before_transcription")
 
-        # Загружаем Whisper
-        self._update_progress(48, "loading_models", "Загрузка модели транскрипции (Whisper)...")
+        # Загружаем Whisper (без обновления прогресса - эта функция перенесена в параллельную обработку)
         success = await self.model_manager.load_whisper(skip_unload=skip_unload)
         if not success:
             raise Exception("Не удалось загрузить Whisper модель")
-
-        self._update_progress(50, "transcription", "Транскрипция речи...")
         
         try:
             result = self.model_manager.whisper_transcribe(audio_path)
@@ -308,13 +305,10 @@ class VideoProcessor:
         self.logger.info(f"Начало диаризации: {audio_path}")
         self.gpu_manager.take_snapshot("before_diarization")
         
-        # Загружаем PyAnnote
-        self._update_progress(58, "loading_models", "Загрузка модели диаризации (PyAnnote)...")
+        # Загружаем PyAnnote (без обновления прогресса - эта функция перенесена в параллельную обработку)
         success = await self.model_manager.load_diarization(skip_unload=skip_unload)
         if not success:
             raise Exception("Не удалось загрузить PyAnnote модель")
-        
-        self._update_progress(62, "diarization", "Определение спикеров...")
         
         try:
             # Загружаем аудио в память
@@ -765,15 +759,13 @@ class VideoProcessor:
         self.logger.info(f"Начало суммаризации ({summary_type}): {len(text)} символов")
         self.gpu_manager.take_snapshot("before_summarization")
 
-        # Этап 6: Загружаем Qwen
-        self._update_progress(60, "loading_qwen", "Загрузка модели суммаризации (Qwen)...")
+        # Этап 6: Загружаем Qwen (обновление прогресса уже делается в process_transcription_and_diarization_parallel)
         self.logger.info("Загрузка Qwen модели...")
         success = await self.model_manager.load_qwen()
         if not success:
             raise Exception("Не удалось загрузить Qwen модель")
 
-        # Этап 7: Делаем краткое содержание
-        self._update_progress(70, "summarizing", "Создание краткого содержания...")
+        # Этап 7: Делаем краткое содержание (обновление прогресса уже делается в process_transcription_and_diarization_parallel)
         self.logger.info("✅ Qwen загружен успешно")
 
         try:
@@ -787,11 +779,7 @@ class VideoProcessor:
             # Суммаризуем каждую часть
             chunk_summaries = []
             for i, chunk in enumerate(chunks):
-                self._update_progress(
-                    70 + int(15 / total_chunks * i),
-                    "summarizing",
-                    f"Суммаризация части {i+1}/{total_chunks}"
-                )
+                self.logger.info(f"Суммаризация части {i+1}/{total_chunks}")
                 
                 max_tokens = AppConfig.SUMMARY_MAX_NEW_TOKENS.get(summary_type, 800)
                 summary = await self.summarize_chunk(chunk, summary_type, max_tokens)
@@ -1112,7 +1100,14 @@ class VideoProcessor:
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
 
             # СУММАРИЗАЦИЯ (этапы 6-7)
+            # Этап 6: Загружаем Qwen
+            self._update_progress(60, "loading_qwen", "Загрузка модели суммаризации (Qwen)...")
             summary = await self.summarize_text(full_text, summary_type)
+            
+            # Этап 7: Делаем краткое содержание
+            self._update_progress(70, "summarizing", "Создание краткого содержания...")
+            # Промежуточные обновления прогресса суммаризации
+            await asyncio.sleep(0.1)  # Даем время UI обновиться
 
             # ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ (внутри финального этапа)
             formatted_transcription = self.format_transcription(aligned_segments)
