@@ -166,7 +166,6 @@ class VideoProcessor:
         Скачивание медиа файла по URL (YouTube и другие)
         """
         self.logger.info(f"Скачивание файла: {url}")
-        self._update_progress(7, "download", f"Скачивание: {url}")
         
         ydl_opts = {
             "outtmpl": os.path.join(self.upload_dir, f"{task_id}.%(ext)s"),
@@ -766,13 +765,16 @@ class VideoProcessor:
         self.logger.info(f"Начало суммаризации ({summary_type}): {len(text)} символов")
         self.gpu_manager.take_snapshot("before_summarization")
 
-        # Загружаем Qwen
-        self._update_progress(62, "loading_models", "Загрузка модели суммаризации (Qwen)...")
+        # Этап 6: Загружаем Qwen
+        self._update_progress(60, "loading_qwen", "Загрузка модели суммаризации (Qwen)...")
+        self.logger.info("Загрузка Qwen модели...")
         success = await self.model_manager.load_qwen()
         if not success:
             raise Exception("Не удалось загрузить Qwen модель")
 
-        self._update_progress(65, "summarization", "Создание документа...")
+        # Этап 7: Делаем краткое содержание
+        self._update_progress(70, "summarizing", "Создание краткого содержания...")
+        self.logger.info("✅ Qwen загружен успешно")
 
         try:
             # Разбиваем текст на части
@@ -786,8 +788,8 @@ class VideoProcessor:
             chunk_summaries = []
             for i, chunk in enumerate(chunks):
                 self._update_progress(
-                    65 + int(20 / total_chunks * i),
-                    "summarization",
+                    70 + int(15 / total_chunks * i),
+                    "summarizing",
                     f"Суммаризация части {i+1}/{total_chunks}"
                 )
                 
@@ -892,8 +894,9 @@ class VideoProcessor:
         Returns:
             кортеж (transcription_segments, diarization_segments)
         """
+        # Этап 2: Загружаем AI модели
+        self._update_progress(10, "loading_ai_models", "Загрузка моделей Whisper и PyAnnote...")
         self.logger.info("Запуск параллельной обработки транскрипции и диаризации")
-        self._update_progress(15, "loading_models", "Загрузка моделей Whisper и PyAnnote...")
         
         try:
             # Загружаем обе модели параллельно
@@ -905,8 +908,9 @@ class VideoProcessor:
             if not diarization_result:
                 raise Exception("Не удалось загрузить PyAnnote модель")
             
+            # Этап 3: Делаем расшифровку
+            self._update_progress(20, "transcribing", "Распознавание речи и определение спикеров...")
             self.logger.info("Обе модели загружены, запуск параллельной обработки...")
-            self._update_progress(25, "transcription_and_diarization", "Транскрипция и диаризация (параллельно)...")
             
             # Запускаем оба процесса параллельно
             transcription_segments, diarization_segments = await asyncio.gather(
@@ -927,8 +931,6 @@ class VideoProcessor:
     
     async def _transcribe_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной транскрипции"""
-        self._update_progress(35, "transcription", "Транскрипция речи...")
-        
         try:
             result = self.model_manager.whisper_transcribe(audio_path)
             segments = []
@@ -947,6 +949,8 @@ class VideoProcessor:
                     "text": result.get("text", "")
                 })
             
+            # Этап 4: Транскрипция завершена
+            self._update_progress(50, "transcription_completed", "Распознавание речи выполнено")
             self.logger.info(f"Транскрипция завершена: {len(segments)} сегментов")
             self.gpu_manager.take_snapshot("after_transcription")
             
@@ -958,8 +962,6 @@ class VideoProcessor:
     
     async def _diarize_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной диаризации"""
-        self._update_progress(40, "diarization", "Определение спикеров...")
-        
         try:
             # Загружаем аудио в память
             waveform, sample_rate = torchaudio.load(audio_path)
@@ -1004,6 +1006,8 @@ class VideoProcessor:
                     "speaker": speaker
                 })
             
+            # Этап 5: Диаризация завершена
+            self._update_progress(55, "diarization_completed", "Определение спикеров выполнено")
             self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
             self.gpu_manager.take_snapshot("after_diarization")
             
@@ -1036,6 +1040,8 @@ class VideoProcessor:
         4. Суммаризация текста (Qwen)
         5. Форматирование и сохранение
         """
+        # Этап 1: Начинаем обрабатывать задачу
+        self._update_progress(0, "task_started", "Начало обработки задачи")
         self.logger.info("=" * 60)
         self.logger.info(f"НАЧАЛО ОБРАБОТКИ ЗАДАЧИ: {task_id}")
         self.logger.info(f"Тип: {media_type}, Суммаризация: {summary_type}")
@@ -1049,19 +1055,16 @@ class VideoProcessor:
             await self.gpu_manager.cleanup("standard")
             self.gpu_manager.take_snapshot("initial")
             
-            # 1. ПОДГОТОВКА АУДИО
-            self._update_progress(12, "audio_extraction", "Извлечение аудиодорожки...")
+            # ПОДГОТОВКА АУДИО (внутри этапа 1, не показываем пользователю)
             if media_type == "audio":
                 audio_path = self.process_audio_file(file_path, task_id)
             else:
                 audio_path = self.extract_audio(file_path, task_id)
 
-            # 2. ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ
-            self._update_progress(15, "loading_models", "Загрузка моделей ИИ...")
+            # ПАРАЛЛЕЛЬНАЯ ТРАНСКРИПЦИЯ И ДИАРИЗАЦИЯ (этапы 2-5)
             transcription_segments, diarization_segments = await self.process_transcription_and_diarization_parallel(audio_path)
             
-            # 3. ОБЪЕДИНЕНИЕ
-            self._update_progress(60, "merging", "Объединение результатов...")
+            # ОБЪЕДИНЕНИЕ (внутри этапа 5, не показываем отдельно)
             aligned_segments = self.align_transcription_and_diarization(
                 transcription_segments,
                 diarization_segments
@@ -1071,13 +1074,10 @@ class VideoProcessor:
             full_text = " ".join([seg["text"] for seg in aligned_segments])
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
 
-            # 4. СУММАРИЗАЦИЯ
-            self._update_progress(65, "summarization", "Создание документа...")
+            # СУММАРИЗАЦИЯ (этапы 6-7)
             summary = await self.summarize_text(full_text, summary_type)
 
-            # 5. ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ
-            self._update_progress(90, "saving", "Сохранение результатов...")
-            
+            # ФОРМАТИРОВАНИЕ И СОХРАНЕНИЕ (внутри финального этапа)
             formatted_transcription = self.format_transcription(aligned_segments)
             processing_time = (datetime.now() - start_time).total_seconds() / 60
             
@@ -1114,7 +1114,8 @@ class VideoProcessor:
             # Выводим сводку по памяти
             self.gpu_manager.log_memory_summary()
             
-            self._update_progress(100, "completed", "Обработка завершена")
+            # Этап 8: Все готово
+            self._update_progress(100, "task_completed", "Обработка успешно завершена")
             
             self.logger.info("=" * 60)
             self.logger.info(f"ЗАДАЧА ЗАВЕРШЕНА: {task_id}")
