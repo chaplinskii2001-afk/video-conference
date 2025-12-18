@@ -34,10 +34,14 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 RUN pip3 install pynvml psutil huggingface_hub
 
-# 1. Whisper (faster-whisper / CTranslate2)
-RUN python3 -c "from faster_whisper import WhisperModel; \
-    WhisperModel('Systran/faster-whisper-large-v3', device='cpu', compute_type='int8', download_root='/app/models/whisper'); \
-    print('faster-whisper model downloaded')"
+# 1. Whisper (faster-whisper / CTranslate2) - ПРИНУДИТЕЛЬНО С ПРАВИЛЬНОЙ МОДЕЛЬЮ
+RUN echo "🔧 ПРИНУДИТЕЛЬНАЯ ЗАГРУЗКА МОДЕЛИ Systran/faster-whisper-large-v3" && \
+    rm -rf /app/models/whisper/* && \
+    python3 -c "from faster_whisper import WhisperModel; \
+    print('Loading Systran/faster-whisper-large-v3...'); \
+    model = WhisperModel('Systran/faster-whisper-large-v3', device='cpu', compute_type='int8', download_root='/app/models/whisper'); \
+    print('✅ faster-whisper model downloaded successfully'); \
+    import os; print('Contents:', os.listdir('/app/models/whisper'))"
 
 # Silero VAD (cached via torch.hub)
 RUN python3 -c "import torch; \
