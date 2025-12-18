@@ -1025,8 +1025,10 @@ class VideoProcessor:
                 # Перенос на GPU если доступно
                 if torch.cuda.is_available():
                     waveform = waveform.to("cuda")
+                    # Убедимся что waveform в float32 для совместимости с PyAnnote
+                    waveform = waveform.to(torch.float32)
                 
-                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}")
+                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}")
 
                 # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
                 if torch.cuda.is_available():
