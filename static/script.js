@@ -376,39 +376,45 @@ function stopProgressTracking() {
     }
 }
 
-function startProgressTracking() {
-    stopProgressTracking();
+async function checkProgress() {
+    if (!currentBatchId) {
+        stopProgressTracking();
+        return;
+    }
 
-    progressCheckInterval = setInterval(async () => {
-        if (!currentBatchId) {
-            stopProgressTracking();
+    try {
+        const response = await fetch(`/batch/progress/${encodeURIComponent(currentBatchId)}?client_id=${encodeURIComponent(clientId)}`, {
+            headers: { 'X-Client-Id': clientId }
+        });
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                stopProgressTracking();
+                localStorage.removeItem(STORAGE_KEYS.activeBatchId);
+                currentBatchId = null;
+                hideProgress();
+                document.getElementById('process-btn').disabled = false;
+                showError('Задача не найдена (возможно, сервер был перезапущен)');
+            }
             return;
         }
 
-        try {
-            const response = await fetch(`/batch/progress/${encodeURIComponent(currentBatchId)}?client_id=${encodeURIComponent(clientId)}`, {
-                headers: { 'X-Client-Id': clientId }
-            });
+        const data = await response.json();
+        handleBatchProgress(data);
 
-            if (!response.ok) {
-                if (response.status === 404) {
-                    stopProgressTracking();
-                    localStorage.removeItem(STORAGE_KEYS.activeBatchId);
-                    currentBatchId = null;
-                    hideProgress();
-                    document.getElementById('process-btn').disabled = false;
-                    showError('Задача не найдена (возможно, сервер был перезапущен)');
-                }
-                return;
-            }
+    } catch (error) {
+        console.error('Ошибка при проверке прогресса:', error);
+    }
+}
 
-            const data = await response.json();
-            handleBatchProgress(data);
+function startProgressTracking() {
+    stopProgressTracking();
 
-        } catch (error) {
-            console.error('Ошибка при проверке прогресса:', error);
-        }
-    }, 2000);
+    // Делаем первый запрос немедленно, чтобы не пропустить начальные этапы
+    checkProgress();
+
+    // Затем запускаем периодический опрос каждые 500 мс для более отзывчивого UI
+    progressCheckInterval = setInterval(checkProgress, 500);
 }
 
 async function startProcessing() {
