@@ -100,11 +100,14 @@ async def lifespan(app: FastAPI):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs("/app/logs", exist_ok=True)
+    os.makedirs("/app/models/whisper", exist_ok=True)
+    os.makedirs("/app/models/pyannote", exist_ok=True)
+    os.makedirs("/app/models/qwen", exist_ok=True)
 
     global processor
     processor = VideoProcessor()
 
-    # Проверяем доступность моделей
+    # Проверяем доступность моделей и инициализируем их при необходимости
     logger.info("Проверка доступности моделей...")
 
     model_dirs = {
@@ -114,10 +117,17 @@ async def lifespan(app: FastAPI):
     }
 
     for model_name, model_path in model_dirs.items():
-        if os.path.exists(model_path):
+        if os.path.exists(model_path) and os.listdir(model_path):
             logger.info(f"✅ Модель {model_name} найдена в {model_path}")
         else:
             logger.warning(f"⚠️ Модель {model_name} не найдена в {model_path}")
+            logger.info(f"   Модель будет загружена при первом использовании...")
+
+    logger.info("Инициализация менеджера моделей...")
+    try:
+        await processor.model_manager.ensure_models_ready()
+    except Exception as e:
+        logger.warning(f"Некритичная ошибка при инициализации моделей: {e}")
 
     logger.info("Все модели будут загружаться динамически по мере необходимости")
     logger.info("Qwen модель будет загружаться с 4-битным квантованием")
