@@ -23,7 +23,7 @@ class GPUConfig:
             "batch_size": 2,
             "max_audio_length_minutes": 120,
             "chunk_length_s": 30,
-            "stride_length_s": (6, 2),
+            "stride_length_s": (4, 2),
         },
         "medium": {
             "name": "Средний (8-12 GB VRAM)",
