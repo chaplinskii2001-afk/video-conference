@@ -46,6 +46,31 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function formatDurationSeconds(seconds) {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+    }
+
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+
+    if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatProcessingMinutes(minutes) {
+    if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes < 0) {
+        return null;
+    }
+
+    return formatDurationSeconds(minutes * 60);
+}
+
 function isAudioFile(fileName) {
     const ext = (fileName.split('.').pop() || '').toLowerCase();
     return ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg'].includes(ext);
@@ -91,9 +116,25 @@ function renderCompletedResults() {
         const summaryUrl = `/download/${encodeURIComponent(t.task_id)}/summary?client_id=${encodeURIComponent(clientId)}`;
         const transcriptionUrl = `/download/${encodeURIComponent(t.task_id)}/transcription?client_id=${encodeURIComponent(clientId)}`;
 
+        const metaParts = [];
+        const audioDuration = formatDurationSeconds(t.audio_duration_seconds);
+        const processingTime = formatProcessingMinutes(t.processing_time_minutes);
+
+        if (audioDuration) {
+            metaParts.push(`Аудио: ${audioDuration}`);
+        }
+        if (processingTime) {
+            metaParts.push(`Обработка: ${processingTime}`);
+        }
+
+        const metaHtml = metaParts.length
+            ? `<div class="completed-meta">${escapeHtml(metaParts.join(' • '))}</div>`
+            : '';
+
         return `
             <div class="completed-item">
                 <div class="completed-name">${safeName}</div>
+                ${metaHtml}
                 <div class="completed-links">
                     <a class="download-link" href="${summaryUrl}" target="_blank" rel="noopener">Краткое содержание</a>
                     <a class="download-link secondary" href="${transcriptionUrl}" target="_blank" rel="noopener">Расшифровка</a>
@@ -306,7 +347,12 @@ function handleBatchProgress(batchInfo) {
     // Persist + render completed tasks
     items
         .filter(it => it.status === 'completed')
-        .forEach(it => addCompletedTask({ task_id: it.task_id, file_name: it.file_name }));
+        .forEach(it => addCompletedTask({
+            task_id: it.task_id,
+            file_name: it.file_name,
+            processing_time_minutes: it.result && it.result.processing_time_minutes,
+            audio_duration_seconds: it.result && it.result.audio_duration_seconds
+        }));
 
     renderCompletedResults();
 

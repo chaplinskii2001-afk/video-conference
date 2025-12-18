@@ -19,6 +19,13 @@ PROCESSING_STAGES = {
         "description": "Инициализация обработки задачи"
     },
 
+    # Этап 1.1: Подготовка аудио
+    "preparing_audio": {
+        "order": 1,
+        "display_name": "Подготавливаем аудио",
+        "description": "Извлечение или конвертация аудиодорожки"
+    },
+
     # Этап 2: Загружаем AI модели (Whisper + PyAnnote)
     "loading_ai_models": {
         "order": 2,
@@ -66,6 +73,13 @@ PROCESSING_STAGES = {
         "order": 8,
         "display_name": "Все готово",
         "description": "Обработка успешно завершена"
+    },
+
+    # Ошибка
+    "error": {
+        "order": 99,
+        "display_name": "Ошибка",
+        "description": "Произошла ошибка при обработке"
     },
 
     # Устаревшие этапы (для обратной совместимости)
@@ -138,23 +152,19 @@ PROCESSING_STAGES = {
 
 
 def get_display_stage(technical_stage: str) -> dict:
-    """
-    Получить информацию о этапе для отображения пользователю
-    
-    Args:
-        technical_stage: техническое имя этапа
-        
-    Returns:
-        dict с display_name, description и order
+    """Получить информацию о этапе для отображения пользователю.
+
+    Возвращает копию словаря, чтобы потребитель мог безопасно менять поля
+    (например, подставлять динамическое описание) без мутации глобального справочника.
     """
     if technical_stage in PROCESSING_STAGES:
-        return PROCESSING_STAGES[technical_stage]
-    
+        return dict(PROCESSING_STAGES[technical_stage])
+
     # Fallback для неизвестных этапов
     return {
         "order": 0,
         "display_name": "Обработка",
-        "description": technical_stage
+        "description": technical_stage,
     }
 
 

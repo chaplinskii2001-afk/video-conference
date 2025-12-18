@@ -478,6 +478,12 @@ body {
     word-break: break-word;
 }
 
+.completed-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
 .completed-links {
     display: flex;
     flex-direction: column;
