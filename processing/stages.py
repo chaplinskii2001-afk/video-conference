@@ -12,87 +12,125 @@ PROCESSING_STAGES = {
         "description": "Ожидание начала обработки"
     },
 
-    # Инициализация и подготовка
+    # Этап 1: Начинаем обрабатывать задачу
+    "task_started": {
+        "order": 1,
+        "display_name": "Начинаем обработку",
+        "description": "Инициализация обработки задачи"
+    },
+
+    # Этап 2: Загружаем AI модели (Whisper + PyAnnote)
+    "loading_ai_models": {
+        "order": 2,
+        "display_name": "Загружаем AI модели",
+        "description": "Подготовка моделей Whisper и PyAnnote"
+    },
+
+    # Этап 3: Делаем расшифровку (параллельная обработка)
+    "transcribing": {
+        "order": 3,
+        "display_name": "Делаем расшифровку",
+        "description": "Распознавание речи и определение спикеров"
+    },
+
+    # Этап 4: Транскрипция завершена
+    "transcription_completed": {
+        "order": 4,
+        "display_name": "Транскрипция завершена",
+        "description": "Распознавание речи выполнено"
+    },
+
+    # Этап 5: Диаризация завершена
+    "diarization_completed": {
+        "order": 5,
+        "display_name": "Диаризация завершена",
+        "description": "Определение спикеров выполнено"
+    },
+
+    # Этап 6: Загружаем Qwen
+    "loading_qwen": {
+        "order": 6,
+        "display_name": "Загружаем модель суммаризации",
+        "description": "Подготовка модели Qwen"
+    },
+
+    # Этап 7: Делаем краткое содержание
+    "summarizing": {
+        "order": 7,
+        "display_name": "Делаем краткое содержание",
+        "description": "Создание документа с итогами"
+    },
+
+    # Этап 8: Все готово
+    "task_completed": {
+        "order": 8,
+        "display_name": "Все готово",
+        "description": "Обработка успешно завершена"
+    },
+
+    # Устаревшие этапы (для обратной совместимости)
     "initialization": {
         "order": 1,
         "display_name": "Начало обработки задачи",
         "description": "Инициализация системы"
     },
     "download": {
-        "order": 2,
+        "order": 1,
         "display_name": "Подготовка файла",
         "description": "Скачивание или сохранение файла"
     },
     "preprocessing": {
-        "order": 3,
+        "order": 1,
         "display_name": "Подготовка файла",
         "description": "Подготовка к обработке"
     },
-    
-    # Работа с аудио
     "audio_extraction": {
-        "order": 4,
+        "order": 1,
         "display_name": "Извлечение аудиодорожки",
         "description": "Извлечение звука из видео"
     },
     "audio_conversion": {
-        "order": 4,
+        "order": 1,
         "display_name": "Конвертация аудио",
         "description": "Подготовка аудиофайла"
     },
-    
-    # Загрузка моделей
     "loading_models": {
-        "order": 5,
+        "order": 2,
         "display_name": "Загрузка моделей ИИ",
         "description": "Подготовка нейросетей"
     },
-    
-    # Параллельная обработка транскрипции и диаризации
     "transcription_and_diarization": {
-        "order": 6,
+        "order": 3,
         "display_name": "Параллельная обработка",
         "description": "Распознавание речи (Whisper) и определение спикеров (PyAnnote) одновременно"
     },
-    
-    # Транскрипция (отдельно, для обратной совместимости)
     "transcription": {
-        "order": 6,
+        "order": 3,
         "display_name": "Транскрипция речи",
         "description": "Распознавание речи (Whisper)"
     },
-    
-    # Диаризация (отдельно, для обратной совместимости)
     "diarization": {
-        "order": 7,
+        "order": 3,
         "display_name": "Определение спикеров",
         "description": "Разделение по говорящим людям (PyAnnote)"
     },
-    
-    # Объединение результатов
     "merging": {
-        "order": 7,
+        "order": 5,
         "display_name": "Объединение результатов",
         "description": "Согласование транскрипции и спикеров"
     },
-    
-    # Суммаризация
     "summarization": {
-        "order": 8,
+        "order": 7,
         "display_name": "Создание документа",
         "description": "Написание краткого содержания (Qwen)"
     },
-    
-    # Сохранение
     "saving": {
-        "order": 9,
+        "order": 7,
         "display_name": "Сохранение результатов",
         "description": "Финализация и сохранение"
     },
-    
-    # Завершение
     "completed": {
-        "order": 10,
+        "order": 8,
         "display_name": "Обработка завершена",
         "description": "Успешно завершено"
     }
