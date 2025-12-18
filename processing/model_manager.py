@@ -145,6 +145,13 @@ class ModelManager:
                     dtype=torch.float32,
                 )
             
+            # Оптимизация: BetterTransformer для ускорения Whisper
+            try:
+                model = model.to_bettertransformer()
+                self.logger.info("✅ BetterTransformer включен для Whisper (ускорение 20-30%)")
+            except Exception as e:
+                self.logger.warning(f"BetterTransformer недоступен для Whisper: {e}")
+            
             # Создаем pipeline
             chunk_length = self.whisper_chunk_length_s
             stride_length = self.whisper_stride_length_s
@@ -260,6 +267,30 @@ class ModelManager:
                 # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
+                
+                # Оптимизация: использование float16 для ускорения
+                try:
+                    # Переводим все модели в float16
+                    if hasattr(self.diarization_pipeline, '_segmentation'):
+                        if hasattr(self.diarization_pipeline._segmentation.model, 'half'):
+                            self.diarization_pipeline._segmentation.model.half()
+                            self.logger.info("PyAnnote segmentation модель переведена в float16")
+                    if hasattr(self.diarization_pipeline, '_embedding'):
+                        if hasattr(self.diarization_pipeline._embedding.model_, 'half'):
+                            self.diarization_pipeline._embedding.model_.half()
+                            self.logger.info("PyAnnote embedding модель переведена в float16")
+                except Exception as e:
+                    self.logger.warning(f"Не удалось включить float16 для PyAnnote: {e}")
+            
+            # Оптимизация параметров диаризации для скорости
+            # Увеличиваем batch_size для embedding (ускоряет обработку)
+            diarization_batch_size = self.gpu_config.get("diarization_batch_size", 32)
+            if hasattr(self.diarization_pipeline, '_embedding'):
+                try:
+                    self.diarization_pipeline._embedding.batch_size = diarization_batch_size
+                    self.logger.info(f"PyAnnote embedding batch_size установлен: {diarization_batch_size}")
+                except Exception as e:
+                    self.logger.warning(f"Не удалось установить batch_size для embedding: {e}")
             
             # Обновляем current_loaded_model только если это не параллельная загрузка
             if not skip_unload:

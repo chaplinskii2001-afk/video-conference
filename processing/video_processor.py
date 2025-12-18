@@ -339,9 +339,15 @@ class VideoProcessor:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
-            # Запуск диаризации
+            # Запуск диаризации с оптимизированными параметрами
+            # min_duration_off и min_duration_on уменьшают чувствительность,
+            # что ускоряет обработку с минимальной потерей качества
             inputs = {"waveform": waveform, "sample_rate": sample_rate}
-            output = self.model_manager.diarization_pipeline(inputs)
+            output = self.model_manager.diarization_pipeline(
+                inputs,
+                min_duration_off=0.5,  # минимальная пауза между репликами (было 0.0)
+                min_duration_on=0.5,   # минимальная длительность реплики (было 0.0)
+            )
             
             # Извлечение результатов
             diarization = output.speaker_diarization
@@ -952,11 +958,20 @@ class VideoProcessor:
     
     async def _transcribe_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной транскрипции"""
+        import time
         try:
-            self.logger.info("Начало транскрипции аудио (Whisper)...")
-            result = self.model_manager.whisper_transcribe(audio_path)
-            segments = []
+            start_time = time.time()
+            self.logger.info("🔄 [WHISPER] Начало транскрипции аудио...")
             
+            # Используем run_in_executor для запуска синхронного кода в отдельном потоке
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                self.model_manager.whisper_transcribe, 
+                audio_path
+            )
+            
+            segments = []
             if isinstance(result.get("chunks"), list):
                 for chunk in result["chunks"]:
                     segments.append({
@@ -971,73 +986,90 @@ class VideoProcessor:
                     "text": result.get("text", "")
                 })
             
-            self.logger.info(f"✅ Транскрипция завершена: {len(segments)} сегментов")
+            elapsed = time.time() - start_time
+            self.logger.info(f"✅ [WHISPER] Транскрипция завершена: {len(segments)} сегментов за {elapsed:.2f}с")
             self.gpu_manager.take_snapshot("after_transcription")
             
             return segments
             
         except Exception as e:
-            self.logger.error(f"Ошибка транскрипции: {e}", exc_info=True)
+            self.logger.error(f"❌ [WHISPER] Ошибка транскрипции: {e}", exc_info=True)
             raise
     
     async def _diarize_audio_parallel(self, audio_path: str) -> List[Dict]:
         """Вспомогательный метод для параллельной диаризации"""
+        import time
         try:
-            self.logger.info("Начало диаризации аудио (PyAnnote)...")
-            # Загружаем аудио в память
-            waveform, sample_rate = torchaudio.load(audio_path)
+            start_time = time.time()
+            self.logger.info("🔄 [PYANNOTE] Начало диаризации аудио...")
             
-            # Ресемплинг если нужно
-            if sample_rate != 16000:
-                self.logger.info(f"Ресемплинг: {sample_rate} Hz -> 16000 Hz")
-                resampler = torchaudio.transforms.Resample(
-                    orig_freq=sample_rate,
-                    new_freq=16000
-                )
-                waveform = resampler(waveform)
-                sample_rate = 16000
-            
-            # Конвертация в моно если стерео
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
-            
-            # Перенос на GPU если доступно
-            if torch.cuda.is_available():
-                waveform = waveform.to("cuda")
-            
-            self.logger.info(f"Аудио подготовлено для диаризации: shape={waveform.shape}")
+            # Функция для выполнения диаризации (будет запущена в отдельном потоке)
+            def run_diarization():
+                # Загружаем аудио в память
+                waveform, sample_rate = torchaudio.load(audio_path)
+                
+                # Ресемплинг если нужно
+                if sample_rate != 16000:
+                    self.logger.info(f"[PYANNOTE] Ресемплинг: {sample_rate} Hz -> 16000 Hz")
+                    resampler = torchaudio.transforms.Resample(
+                        orig_freq=sample_rate,
+                        new_freq=16000
+                    )
+                    waveform = resampler(waveform)
+                    sample_rate = 16000
+                
+                # Конвертация в моно если стерео
+                if waveform.shape[0] > 1:
+                    waveform = waveform.mean(dim=0, keepdim=True)
+                
+                # Перенос на GPU если доступно
+                if torch.cuda.is_available():
+                    waveform = waveform.to("cuda")
+                
+                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}")
 
-            # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
-            if torch.cuda.is_available():
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
+                # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+                if torch.cuda.is_available():
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                
+                # Запуск диаризации с оптимизированными параметрами
+                inputs = {"waveform": waveform, "sample_rate": sample_rate}
+                output = self.model_manager.diarization_pipeline(
+                    inputs,
+                    min_duration_off=0.5,  # минимальная пауза между репликами
+                    min_duration_on=0.5,   # минимальная длительность реплики
+                )
+                
+                # Извлечение результатов
+                diarization = output.speaker_diarization
+                result = []
+                
+                for turn, speaker in diarization:
+                    result.append({
+                        "start": turn.start,
+                        "end": turn.end,
+                        "speaker": speaker
+                    })
+                
+                # Очистка
+                del waveform
+                del inputs
+                
+                return result
             
-            # Запуск диаризации
-            inputs = {"waveform": waveform, "sample_rate": sample_rate}
-            output = self.model_manager.diarization_pipeline(inputs)
+            # Используем run_in_executor для запуска в отдельном потоке
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, run_diarization)
             
-            # Извлечение результатов
-            diarization = output.speaker_diarization
-            result = []
-            
-            for turn, speaker in diarization:
-                result.append({
-                    "start": turn.start,
-                    "end": turn.end,
-                    "speaker": speaker
-                })
-            
-            self.logger.info(f"✅ Диаризация завершена: {len(result)} сегментов")
+            elapsed = time.time() - start_time
+            self.logger.info(f"✅ [PYANNOTE] Диаризация завершена: {len(result)} сегментов за {elapsed:.2f}с")
             self.gpu_manager.take_snapshot("after_diarization")
-            
-            # Очистка
-            del waveform
-            del inputs
             
             return result
             
         except Exception as e:
-            self.logger.error(f"Ошибка диаризации: {e}", exc_info=True)
+            self.logger.error(f"❌ [PYANNOTE] Ошибка диаризации: {e}", exc_info=True)
             raise
     
     # ==================== ГЛАВНЫЙ ПАЙПЛАЙН ====================
