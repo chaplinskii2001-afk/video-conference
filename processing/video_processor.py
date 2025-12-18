@@ -1022,24 +1022,29 @@ class VideoProcessor:
                 if waveform.shape[0] > 1:
                     waveform = waveform.mean(dim=0, keepdim=True)
                 
-                # Перенос на GPU если доступно
+                # Перенос на GPU с приведением к float16 для соответствия модели
                 if torch.cuda.is_available():
-                    waveform = waveform.to("cuda")
+                    waveform = waveform.to("cuda", dtype=torch.float16)
                 
-                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}")
+                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}")
 
                 # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
                 if torch.cuda.is_available():
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
                 
-                # Запуск диаризации с оптимизированными параметрами
+                # Запуск диаризации (параметры min_duration_off/on могут не поддерживаться в текущей версии)
                 inputs = {"waveform": waveform, "sample_rate": sample_rate}
-                output = self.model_manager.diarization_pipeline(
-                    inputs,
-                    min_duration_off=0.5,  # минимальная пауза между репликами
-                    min_duration_on=0.5,   # минимальная длительность реплики
-                )
+                try:
+                    output = self.model_manager.diarization_pipeline(
+                        inputs,
+                        min_duration_off=0.5,  # минимальная пауза между репликами
+                        min_duration_on=0.5,   # минимальная длительность реплики
+                    )
+                except TypeError:
+                    # Параметры могут не поддерживаться в текущей версии PyAnnote
+                    self.logger.warning("Параметры min_duration_off/on не поддерживаются, используем стандартные настройки")
+                    output = self.model_manager.diarization_pipeline(inputs)
                 
                 # Извлечение результатов
                 diarization = output.speaker_diarization
@@ -1119,10 +1124,31 @@ class VideoProcessor:
 
             audio_duration_seconds = None
             try:
-                info = torchaudio.info(audio_path)
-                sample_rate = getattr(info, "sample_rate", None)
-                if sample_rate:
-                    audio_duration_seconds = info.num_frames / sample_rate
+                # Современный способ получения информации об аудио файле
+                try:
+                    info = torchaudio.info(audio_path)
+                    # Проверяем, какой атрибут доступен (в зависимости от версии torchaudio)
+                    if hasattr(info, 'sample_rate'):
+                        sample_rate = info.sample_rate
+                    elif hasattr(info, 'r'):
+                        sample_rate = info.r
+                    else:
+                        # Fallback к load для определения частоты дискретизации
+                        waveform, sample_rate = torchaudio.load(audio_path)
+                        audio_duration_seconds = waveform.shape[1] / sample_rate
+                        self.logger.info(f"Определена длительность аудио: {audio_duration_seconds:.2f}с (fallback метод)")
+                        return audio_duration_seconds
+                    
+                    if sample_rate:
+                        audio_duration_seconds = info.num_frames / sample_rate
+                        
+                except AttributeError:
+                    # Fallback для старых версий torchaudio
+                    waveform, sample_rate = torchaudio.load(audio_path)
+                    audio_duration_seconds = waveform.shape[1] / sample_rate
+                    
+                self.logger.info(f"Определена длительность аудио: {audio_duration_seconds:.2f}с")
+                
             except Exception as e:
                 self.logger.warning(f"Не удалось определить длительность аудио: {e}")
 

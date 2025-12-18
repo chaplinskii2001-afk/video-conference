@@ -193,12 +193,29 @@ class ModelManager:
         try:
             import torchaudio
 
-            info = torchaudio.info(audio_path)
-            sample_rate = getattr(info, "sample_rate", None)
-            if not sample_rate:
-                return None
-
-            return (info.num_frames / sample_rate) / 60
+            # Современный способ получения информации об аудио файле
+            try:
+                info = torchaudio.info(audio_path)
+                # Проверяем, какой атрибут доступен (в зависимости от версии torchaudio)
+                if hasattr(info, 'sample_rate'):
+                    sample_rate = info.sample_rate
+                elif hasattr(info, 'r'):
+                    sample_rate = info.r
+                else:
+                    # Fallback к load для определения частоты дискретизации
+                    waveform, sample_rate = torchaudio.load(audio_path)
+                    return (waveform.shape[1] / sample_rate) / 60
+                
+                if not sample_rate:
+                    return None
+                
+                return (info.num_frames / sample_rate) / 60
+                
+            except AttributeError:
+                # Fallback для старых версий torchaudio
+                waveform, sample_rate = torchaudio.load(audio_path)
+                return (waveform.shape[1] / sample_rate) / 60
+                
         except Exception as e:
             self.logger.warning(f"Не удалось определить длительность аудио: {e}")
             return None
@@ -275,12 +292,23 @@ class ModelManager:
                         if hasattr(self.diarization_pipeline._segmentation.model, 'half'):
                             self.diarization_pipeline._segmentation.model.half()
                             self.logger.info("PyAnnote segmentation модель переведена в float16")
+                            # Проверяем типы данных для debug
+                            for name, param in self.diarization_pipeline._segmentation.model.named_parameters():
+                                if param.dtype == torch.float16:
+                                    self.logger.debug(f"Param {name} is float16")
+                                    break
                     if hasattr(self.diarization_pipeline, '_embedding'):
                         if hasattr(self.diarization_pipeline._embedding.model_, 'half'):
                             self.diarization_pipeline._embedding.model_.half()
                             self.logger.info("PyAnnote embedding модель переведена в float16")
+                            # Проверяем типы данных для debug
+                            for name, param in self.diarization_pipeline._embedding.model_.named_parameters():
+                                if param.dtype == torch.float16:
+                                    self.logger.debug(f"Embedding param {name} is float16")
+                                    break
                 except Exception as e:
                     self.logger.warning(f"Не удалось включить float16 для PyAnnote: {e}")
+                    self.logger.info("PyAnnote будет работать в float32 для совместимости")
             
             # Оптимизация параметров диаризации для скорости
             # Увеличиваем batch_size для embedding (ускоряет обработку)
