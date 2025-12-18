@@ -292,7 +292,133 @@ class VideoProcessor:
                 await self.model_manager.unload_current_model()
     
     # ==================== ДИАРИЗАЦИЯ ====================
-    
+
+    def _load_audio_mono_16k(self, audio_path: str) -> tuple[torch.Tensor, int]:
+        waveform, sample_rate = torchaudio.load(audio_path)
+
+        if sample_rate != 16000:
+            self.logger.info(f"Ресемплинг: {sample_rate} Hz -> 16000 Hz")
+            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+            waveform = resampler(waveform)
+            sample_rate = 16000
+
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        waveform = waveform.to(torch.float32)
+        return waveform, sample_rate
+
+    def _apply_silero_vad_before_diarization(
+        self,
+        waveform: torch.Tensor,
+        sample_rate: int,
+    ) -> tuple[torch.Tensor, Optional[List[Dict[str, float]]]]:
+        use_vad = bool(self.gpu_config.get("diarization_use_silero_vad", False))
+        if not use_vad:
+            return waveform, None
+
+        try:
+            threshold = float(self.gpu_config.get("silero_vad_threshold", 0.5))
+            speech_pad_ms = int(self.gpu_config.get("silero_vad_speech_pad_ms", 250))
+
+            timestamps = self.model_manager.get_speech_timestamps(
+                waveform.squeeze(0),
+                sample_rate=sample_rate,
+                threshold=threshold,
+                speech_pad_ms=speech_pad_ms,
+            )
+
+            if not timestamps:
+                self.logger.info("Silero VAD: речь не обнаружена, используем оригинальное аудио")
+                return waveform, None
+
+            mapping: List[Dict[str, float]] = []
+            chunks: List[torch.Tensor] = []
+            cursor_samples = 0
+
+            for item in timestamps:
+                start = int(item["start"])
+                end = int(item["end"])
+                if end <= start:
+                    continue
+
+                chunk = waveform[:, start:end]
+                chunks.append(chunk)
+
+                trim_start = cursor_samples / sample_rate
+                cursor_samples += end - start
+                trim_end = cursor_samples / sample_rate
+
+                mapping.append(
+                    {
+                        "trim_start": trim_start,
+                        "trim_end": trim_end,
+                        "orig_start": start / sample_rate,
+                        "orig_end": end / sample_rate,
+                    }
+                )
+
+            if not chunks:
+                return waveform, None
+
+            trimmed_waveform = torch.cat(chunks, dim=1)
+            orig_seconds = waveform.shape[1] / sample_rate
+            trimmed_seconds = trimmed_waveform.shape[1] / sample_rate
+            self.logger.info(
+                "Silero VAD: удаление тишины перед диаризацией: "
+                f"{orig_seconds:.1f}с -> {trimmed_seconds:.1f}с (chunks={len(mapping)})"
+            )
+
+            return trimmed_waveform, mapping
+
+        except Exception as e:
+            self.logger.warning(f"Silero VAD preprocessing недоступен, используем оригинальное аудио: {e}")
+            return waveform, None
+
+    def _map_diarization_back_to_original(
+        self,
+        diarization_iter,
+        mapping: Optional[List[Dict[str, float]]],
+    ) -> List[Dict]:
+        result: List[Dict] = []
+
+        for turn, speaker in diarization_iter:
+            start = float(turn.start)
+            end = float(turn.end)
+
+            if not mapping:
+                result.append({"start": start, "end": end, "speaker": speaker})
+                continue
+
+            for chunk in mapping:
+                overlap_start = max(start, chunk["trim_start"])
+                overlap_end = min(end, chunk["trim_end"])
+                if overlap_end <= overlap_start:
+                    continue
+
+                offset = overlap_start - chunk["trim_start"]
+                orig_start = chunk["orig_start"] + offset
+                orig_end = orig_start + (overlap_end - overlap_start)
+
+                result.append({"start": orig_start, "end": orig_end, "speaker": speaker})
+
+        if not result:
+            return result
+
+        result.sort(key=lambda x: x["start"])
+        merged: List[Dict] = []
+        for seg in result:
+            if (
+                merged
+                and merged[-1]["speaker"] == seg["speaker"]
+                and abs(seg["start"] - merged[-1]["end"]) < 0.05
+            ):
+                merged[-1]["end"] = seg["end"]
+            else:
+                merged.append(seg)
+
+        return merged
+
     async def diarize_audio(self, audio_path: str, skip_unload: bool = False) -> List[Dict]:
         """
         Диаризация аудио - определение кто и когда говорил
@@ -311,62 +437,35 @@ class VideoProcessor:
             raise Exception("Не удалось загрузить PyAnnote модель")
         
         try:
-            # Загружаем аудио в память
-            waveform, sample_rate = torchaudio.load(audio_path)
-            
-            # Ресемплинг если нужно
-            if sample_rate != 16000:
-                self.logger.info(f"Ресемплинг: {sample_rate} Hz -> 16000 Hz")
-                resampler = torchaudio.transforms.Resample(
-                    orig_freq=sample_rate,
-                    new_freq=16000
-                )
-                waveform = resampler(waveform)
-                sample_rate = 16000
-            
-            # Конвертация в моно если стерео
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
-            
-            # Перенос на GPU если доступно
+            waveform, sample_rate = self._load_audio_mono_16k(audio_path)
+            waveform, mapping = self._apply_silero_vad_before_diarization(waveform, sample_rate)
+
             if torch.cuda.is_available():
-                waveform = waveform.to("cuda")
-            
-            self.logger.info(f"Аудио подготовлено: shape={waveform.shape}")
+                waveform = waveform.to("cuda").to(torch.float32)
+
+            self.logger.info(f"Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}")
 
             # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
             if torch.cuda.is_available():
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
-            
-            # Запуск диаризации с оптимизированными параметрами
-            # min_duration_off и min_duration_on уменьшают чувствительность,
-            # что ускоряет обработку с минимальной потерей качества
+
             inputs = {"waveform": waveform, "sample_rate": sample_rate}
             output = self.model_manager.diarization_pipeline(
                 inputs,
-                min_duration_off=0.5,  # минимальная пауза между репликами (было 0.0)
-                min_duration_on=0.5,   # минимальная длительность реплики (было 0.0)
+                min_duration_off=0.5,
+                min_duration_on=0.5,
             )
-            
-            # Извлечение результатов
+
             diarization = output.speaker_diarization
-            result = []
-            
-            for turn, speaker in diarization:
-                result.append({
-                    "start": turn.start,
-                    "end": turn.end,
-                    "speaker": speaker
-                })
-            
+            result = self._map_diarization_back_to_original(diarization, mapping)
+
             self.logger.info(f"Диаризация завершена: {len(result)} сегментов")
             self.gpu_manager.take_snapshot("after_diarization")
-            
-            # Очистка
+
             del waveform
             del inputs
-            
+
             return result
             
         except Exception as e:
@@ -1005,59 +1104,33 @@ class VideoProcessor:
             
             # Функция для выполнения диаризации (будет запущена в отдельном потоке)
             def run_diarization():
-                # Загружаем аудио в память
-                waveform, sample_rate = torchaudio.load(audio_path)
-                
-                # Ресемплинг если нужно
-                if sample_rate != 16000:
-                    self.logger.info(f"[PYANNOTE] Ресемплинг: {sample_rate} Hz -> 16000 Hz")
-                    resampler = torchaudio.transforms.Resample(
-                        orig_freq=sample_rate,
-                        new_freq=16000
-                    )
-                    waveform = resampler(waveform)
-                    sample_rate = 16000
-                
-                # Конвертация в моно если стерео
-                if waveform.shape[0] > 1:
-                    waveform = waveform.mean(dim=0, keepdim=True)
-                
-                # Перенос на GPU если доступно
-                if torch.cuda.is_available():
-                    waveform = waveform.to("cuda")
-                    # Убедимся что waveform в float32 для совместимости с PyAnnote
-                    waveform = waveform.to(torch.float32)
-                
-                self.logger.info(f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}")
+                waveform, sample_rate = self._load_audio_mono_16k(audio_path)
+                waveform, mapping = self._apply_silero_vad_before_diarization(waveform, sample_rate)
 
-                # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+                if torch.cuda.is_available():
+                    waveform = waveform.to("cuda").to(torch.float32)
+
+                self.logger.info(
+                    f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}"
+                )
+
                 if torch.cuda.is_available():
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
-                
-                # Запуск диаризации с оптимизированными параметрами
+
                 inputs = {"waveform": waveform, "sample_rate": sample_rate}
                 output = self.model_manager.diarization_pipeline(
                     inputs,
-                    min_duration_off=0.5,  # минимальная пауза между репликами
-                    min_duration_on=0.5,   # минимальная длительность реплики
+                    min_duration_off=0.5,
+                    min_duration_on=0.5,
                 )
-                
-                # Извлечение результатов
+
                 diarization = output.speaker_diarization
-                result = []
-                
-                for turn, speaker in diarization:
-                    result.append({
-                        "start": turn.start,
-                        "end": turn.end,
-                        "speaker": speaker
-                    })
-                
-                # Очистка
+                result = self._map_diarization_back_to_original(diarization, mapping)
+
                 del waveform
                 del inputs
-                
+
                 return result
             
             # Используем run_in_executor для запуска в отдельном потоке
