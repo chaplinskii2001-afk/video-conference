@@ -907,6 +907,9 @@ class VideoProcessor:
             if not whisper_result:
                 raise Exception("Не удалось загрузить Whisper модель")
             
+            # Небольшая задержка, чтобы UI успел обновиться
+            await asyncio.sleep(0.1)
+            
             # Обновляем прогресс после загрузки Whisper
             self._update_progress(12, "loading_ai_models", "Whisper загружен, загрузка PyAnnote...")
             self.logger.info("Загрузка модели PyAnnote...")
@@ -915,6 +918,9 @@ class VideoProcessor:
             diarization_result = await self.model_manager.load_diarization(skip_unload=True)
             if not diarization_result:
                 raise Exception("Не удалось загрузить PyAnnote модель")
+            
+            # Небольшая задержка, чтобы UI успел обновиться
+            await asyncio.sleep(0.1)
             
             # Этап 3: Делаем расшифровку
             self._update_progress(20, "transcribing", "Распознавание речи и определение спикеров...")
@@ -930,6 +936,8 @@ class VideoProcessor:
             # Важно: обновляем этапы завершения только ПОСЛЕ того как завершились ОБА процесса,
             # иначе пользователь может увидеть "Диаризация завершена" пока транскрипция еще идет (или наоборот).
             self._update_progress(50, "transcription_completed", "Транскрипция завершена")
+            # Небольшая задержка, чтобы UI успел обновиться
+            await asyncio.sleep(0.1)
             self._update_progress(55, "diarization_completed", "Диаризация завершена")
 
             self.logger.info("Параллельная обработка завершена")
@@ -1062,6 +1070,9 @@ class VideoProcessor:
         audio_path = None
         
         try:
+            # Небольшая задержка, чтобы UI успел подключиться и увидеть начальный статус
+            await asyncio.sleep(0.1)
+            
             # Очистка перед началом
             await self.gpu_manager.cleanup("standard")
             self.gpu_manager.take_snapshot("initial")
@@ -1100,9 +1111,15 @@ class VideoProcessor:
             speakers_count = len(set(seg["speaker"] for seg in aligned_segments))
 
             # СУММАРИЗАЦИЯ (этапы 6-7)
+            # Небольшая задержка перед загрузкой новой модели
+            await asyncio.sleep(0.1)
+            
             # Этап 6: Загружаем Qwen
             self._update_progress(60, "loading_qwen", "Загрузка модели суммаризации (Qwen)...")
             summary = await self.summarize_text(full_text, summary_type)
+            
+            # Небольшая задержка, чтобы UI успел обновиться
+            await asyncio.sleep(0.1)
             
             # Этап 7: Делаем краткое содержание
             self._update_progress(70, "summarizing", "Создание краткого содержания...")
