@@ -11,6 +11,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - models-volume:/app/models
       - ./logs:/app/logs
       - ./uploads:/app/uploads
       - ./results:/app/results
@@ -33,3 +34,6 @@ services:
               count: 1
               capabilities: [ gpu ]
     restart: unless-stopped
+
+volumes:
+  models-volume:
