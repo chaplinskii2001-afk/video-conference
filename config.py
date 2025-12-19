@@ -18,7 +18,7 @@ class GPUConfig:
             "name": "Базовый (4-6 GB VRAM)",
             "min_vram_gb": 0,
             "max_vram_gb": 6,
-            "whisper_model_id": "Systran/faster-whisper-large-v3",
+            "whisper_model_id": "Systran/faster-whisper-medium",
             "whisper_compute_type": "int8_float16",
             "qwen_quantization": "4bit",
             "qwen_flash_attention_2": False,
