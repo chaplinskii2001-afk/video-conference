@@ -84,31 +84,8 @@ class ModelManager:
             f"chunk_length_s={self.whisper_chunk_length_s}, "
             f"stride_length_s={self.whisper_stride_length_s}"
         )
-
+    
     # ==================== WHISPER (faster-whisper / CTranslate2) ====================
-
-    def _is_cudnn_cnn_available(self) -> bool:
-        if not torch.cuda.is_available():
-            return False
-
-        import ctypes
-
-        candidates = [
-            "libcudnn_cnn.so.9.1.0",
-            "libcudnn_cnn.so.9.1",
-            "libcudnn_cnn.so.9",
-            "libcudnn_cnn.so",
-        ]
-
-        for lib_name in candidates:
-            try:
-                lib = ctypes.CDLL(lib_name)
-                getattr(lib, "cudnnCreateConvolutionDescriptor")
-                return True
-            except (OSError, AttributeError):
-                continue
-
-        return False
 
     async def load_whisper(self, skip_unload: bool = False) -> bool:
         """Загрузка модели Whisper для транскрипции через faster-whisper (CTranslate2).
@@ -187,14 +164,6 @@ class ModelManager:
             self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            if device == "cuda" and not self._is_cudnn_cnn_available():
-                self.logger.error(
-                    "❌ cuDNN (libcudnn_cnn) не найден в контейнере. "
-                    "Чтобы избежать падения процесса, faster-whisper будет запущен на CPU. "
-                    "Используйте образ CUDA с cuDNN (например, *-cudnn-runtime) или установите libcudnn."
-                )
-                device = "cpu"
-
             compute_type = self.gpu_config.get("whisper_compute_type")
             if not compute_type:
                 quantization = self.gpu_config.get("whisper_quantization", "int8")
@@ -204,13 +173,6 @@ class ModelManager:
                     compute_type = "float16"
                 else:
                     compute_type = "float32"
-
-            if device == "cpu" and compute_type in ("float16", "int8_float16"):
-                fallback = "int8" if compute_type.startswith("int8") else "float32"
-                self.logger.warning(
-                    f"⚠️ compute_type={compute_type} не поддерживается на CPU. Переопределяем на {fallback}"
-                )
-                compute_type = fallback
 
             num_workers = int(self.gpu_config.get("whisper_num_workers", 1))
             cpu_threads = int(self.gpu_config.get("whisper_cpu_threads", 0))
@@ -282,14 +244,6 @@ class ModelManager:
                     self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
                     
                     device = "cuda" if torch.cuda.is_available() else "cpu"
-                    if device == "cuda" and not self._is_cudnn_cnn_available():
-                        self.logger.error(
-                            "❌ cuDNN (libcudnn_cnn) не найден в контейнере. "
-                            "Чтобы избежать падения процесса, faster-whisper будет запущен на CPU. "
-                            "Используйте образ CUDA с cuDNN (например, *-cudnn-runtime) или установите libcudnn."
-                        )
-                        device = "cpu"
-
                     compute_type = self.gpu_config.get("whisper_compute_type")
                     if not compute_type:
                         quantization = self.gpu_config.get("whisper_quantization", "int8")
@@ -299,14 +253,7 @@ class ModelManager:
                             compute_type = "float16"
                         else:
                             compute_type = "float32"
-
-                    if device == "cpu" and compute_type in ("float16", "int8_float16"):
-                        fallback = "int8" if compute_type.startswith("int8") else "float32"
-                        self.logger.warning(
-                            f"⚠️ compute_type={compute_type} не поддерживается на CPU. Переопределяем на {fallback}"
-                        )
-                        compute_type = fallback
-
+                    
                     num_workers = int(self.gpu_config.get("whisper_num_workers", 1))
                     cpu_threads = int(self.gpu_config.get("whisper_cpu_threads", 0))
                     
