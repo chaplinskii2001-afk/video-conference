@@ -16,7 +16,13 @@ import yt_dlp
 from transformers import StoppingCriteria, StoppingCriteriaList
 
 # Подавляем предупреждения о torchaudio deprecation (будут актуальны в версии 2.9+)
+# Важно: torchaudio может выставлять stacklevel=2, поэтому фильтр по module может не сработать.
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+warnings.filterwarnings(
+    "ignore",
+    message=r"torchaudio\._backend\.utils\.info has been deprecated\..*",
+    category=UserWarning,
+)
 # Подавляем экспериментальное предупреждение о chunking в Whisper
 warnings.filterwarnings("ignore", message=r".*chunk_length_s is very experimental.*")
 # Подавляем предупреждение о forced_decoder_ids
@@ -440,13 +446,13 @@ class VideoProcessor:
             waveform, sample_rate = self._load_audio_mono_16k(audio_path)
             waveform, mapping = self._apply_silero_vad_before_diarization(waveform, sample_rate)
 
-            if torch.cuda.is_available():
+            if self.model_manager.diarization_device == "cuda":
                 waveform = waveform.to("cuda").to(torch.float32)
 
             self.logger.info(f"Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}")
 
             # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
-            if torch.cuda.is_available():
+            if self.model_manager.diarization_device == "cuda":
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
 
@@ -1011,39 +1017,64 @@ class VideoProcessor:
             whisper_result = await self.model_manager.load_whisper(skip_unload=True)
             if not whisper_result:
                 raise Exception("Не удалось загрузить Whisper модель")
-            
+
             # Небольшая задержка, чтобы UI успел обновиться
             await asyncio.sleep(0.1)
-            
+
             # Обновляем прогресс после загрузки Whisper
             self._update_progress(12, "loading_ai_models", "Whisper загружен, загрузка PyAnnote...")
             self.logger.info("Загрузка модели PyAnnote...")
-            
-            # Загружаем PyAnnote
-            diarization_result = await self.model_manager.load_diarization(skip_unload=True)
-            if not diarization_result:
-                raise Exception("Не удалось загрузить PyAnnote модель")
-            
-            # Небольшая задержка, чтобы UI успел обновиться
-            await asyncio.sleep(0.1)
-            
-            # Этап 3: Делаем расшифровку
-            self._update_progress(20, "transcribing", "Распознавание речи и определение спикеров...")
-            self.logger.info("Обе модели загружены, запуск параллельной обработки...")
-            
-            # Запускаем оба процесса параллельно
-            transcription_segments, diarization_segments = await asyncio.gather(
-                self._transcribe_audio_parallel(audio_path),
-                self._diarize_audio_parallel(audio_path),
-                return_exceptions=False,
-            )
 
-            # Важно: обновляем этапы завершения только ПОСЛЕ того как завершились ОБА процесса,
-            # иначе пользователь может увидеть "Диаризация завершена" пока транскрипция еще идет (или наоборот).
-            self._update_progress(50, "transcription_completed", "Транскрипция завершена")
-            # Небольшая задержка, чтобы UI успел обновиться
+            # Загружаем PyAnnote. Если не получилось — продолжаем без диаризации.
+            diarization_enabled = await self.model_manager.load_diarization(skip_unload=True)
+            if not diarization_enabled:
+                self.logger.warning("⚠️ PyAnnote не загружен — продолжаем без диаризации (без спикеров)")
+                self._update_progress(
+                    15,
+                    "loading_ai_models",
+                    "PyAnnote недоступен, продолжаем только с транскрипцией...",
+                )
+
             await asyncio.sleep(0.1)
-            self._update_progress(55, "diarization_completed", "Диаризация завершена")
+
+            # Этап 3: Делаем расшифровку
+            stage_msg = "Распознавание речи и определение спикеров..." if diarization_enabled else "Распознавание речи..."
+            self._update_progress(20, "transcribing", stage_msg)
+            self.logger.info("Запуск параллельной обработки...")
+
+            if diarization_enabled:
+                trans_res, diar_res = await asyncio.gather(
+                    self._transcribe_audio_parallel(audio_path),
+                    self._diarize_audio_parallel(audio_path),
+                    return_exceptions=True,
+                )
+
+                if isinstance(trans_res, Exception):
+                    raise trans_res
+
+                if isinstance(diar_res, Exception):
+                    self.logger.error(
+                        f"⚠️ Диаризация завершилась ошибкой, продолжаем без спикеров: {diar_res}",
+                        exc_info=(type(diar_res), diar_res, diar_res.__traceback__),
+                    )
+                    transcription_segments = trans_res
+                    diarization_segments = []
+                    diarization_enabled = False
+                else:
+                    transcription_segments = trans_res
+                    diarization_segments = diar_res
+            else:
+                transcription_segments = await self._transcribe_audio_parallel(audio_path)
+                diarization_segments = []
+
+            # Важно: обновляем этапы завершения только ПОСЛЕ того как завершились процессы.
+            self._update_progress(50, "transcription_completed", "Транскрипция завершена")
+            await asyncio.sleep(0.1)
+
+            if diarization_enabled:
+                self._update_progress(55, "diarization_completed", "Диаризация завершена")
+            else:
+                self._update_progress(55, "diarization_skipped", "Диаризация пропущена (без спикеров)")
 
             self.logger.info("Параллельная обработка завершена")
             return transcription_segments, diarization_segments
@@ -1107,14 +1138,14 @@ class VideoProcessor:
                 waveform, sample_rate = self._load_audio_mono_16k(audio_path)
                 waveform, mapping = self._apply_silero_vad_before_diarization(waveform, sample_rate)
 
-                if torch.cuda.is_available():
+                if self.model_manager.diarization_device == "cuda":
                     waveform = waveform.to("cuda").to(torch.float32)
 
                 self.logger.info(
                     f"[PYANNOTE] Аудио подготовлено: shape={waveform.shape}, dtype={waveform.dtype}"
                 )
 
-                if torch.cuda.is_available():
+                if self.model_manager.diarization_device == "cuda":
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
 

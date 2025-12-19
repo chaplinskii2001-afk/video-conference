@@ -51,6 +51,7 @@ class ModelManager:
         self.whisper_backend = None
 
         self.diarization_pipeline = None
+        self.diarization_device = "cpu"
 
         self.qwen_model = None
         self.qwen_tokenizer = None
@@ -64,6 +65,16 @@ class ModelManager:
         # Получаем конфигурацию GPU
         self.gpu_config = config.get("gpu_config", {})
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+        # Важно: заранее подгружаем cuDNN из Python wheels (nvidia-cudnn/torch),
+        # чтобы избежать конфликтов версий между системной cuDNN и той, с которой собран PyTorch.
+        if torch.cuda.is_available():
+            try:
+                from processing.cuda_preload import preload_cudnn
+
+                preload_cudnn(logger=self.logger)
+            except Exception as e:
+                self.logger.warning(f"⚠️ Не удалось выполнить preload cuDNN: {e}")
 
         try:
             self.whisper_batch_size = int(self.gpu_config["batch_size"])
@@ -426,62 +437,78 @@ class ModelManager:
         self.logger.info("Загрузка PyAnnote модели...")
         self.gpu_manager.take_snapshot("before_diarization")
         
-        # Сохраняем текущий LD_LIBRARY_PATH и очищаем его для PyTorch
-        # Это решает конфликт cuDNN версий между системным и встроенным в PyTorch
-        old_ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
-        
+        # По умолчанию pipeline остается на CPU. Если GPU доступна — попробуем перенести,
+        # но при проблемах (например, cuDNN version incompatibility) продолжим на CPU,
+        # чтобы не падать всей задачей.
+        self.diarization_device = "cpu"
+
         try:
             diarization_id = self.config["model_config"]["diarization_id"]
             diarization_path = self.config["model_config"]["diarization_path"]
-            
-            if old_ld_library_path:
-                self.logger.info(f"🔧 Временно очищаем LD_LIBRARY_PATH для избежания конфликта cuDNN")
-                os.environ["LD_LIBRARY_PATH"] = ""
-            
-            # Загружаем pipeline
+
+            # Загружаем pipeline (по умолчанию CPU)
             self.diarization_pipeline = Pipeline.from_pretrained(
                 diarization_id,
                 token=self.hf_token,
                 cache_dir=diarization_path,
             )
-            
-            # Переносим на GPU если доступно
-            if torch.cuda.is_available():
-                self.diarization_pipeline.to(torch.device("cuda"))
-                self.logger.info("PyAnnote перенесен на GPU")
 
-                # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-            
+            if torch.cuda.is_available():
+                # Пытаемся гарантировать, что в процессе загружена правильная cuDNN
+                try:
+                    from processing.cuda_preload import preload_cudnn
+
+                    preload_cudnn(logger=self.logger)
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Не удалось выполнить preload cuDNN перед PyAnnote: {e}")
+
+                try:
+                    self.diarization_pipeline.to(torch.device("cuda"))
+                    self.diarization_device = "cuda"
+                    self.logger.info("PyAnnote перенесен на GPU")
+
+                    # PyAnnote может отключать TF32 ради воспроизводимости — возвращаем настройку проекта
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                except RuntimeError as e:
+                    msg = str(e)
+                    if "cuDNN version incompatibility" in msg or "cudnn version incompatibility" in msg.lower():
+                        self.logger.warning(
+                            "⚠️ Обнаружена несовместимость cuDNN при переносе PyAnnote на GPU. "
+                            "Продолжаем диаризацию на CPU (задача не будет прервана)."
+                        )
+                        try:
+                            self.diarization_pipeline.to(torch.device("cpu"))
+                        except Exception:
+                            pass
+                        self.diarization_device = "cpu"
+                    else:
+                        raise
+
             # Оптимизация параметров диаризации для скорости
-            # Увеличиваем batch_size для embedding (ускоряет обработку)
             diarization_batch_size = self.gpu_config.get("diarization_batch_size", 32)
-            if hasattr(self.diarization_pipeline, '_embedding'):
+            if hasattr(self.diarization_pipeline, "_embedding"):
                 try:
                     self.diarization_pipeline._embedding.batch_size = diarization_batch_size
                     self.logger.info(f"PyAnnote embedding batch_size установлен: {diarization_batch_size}")
                 except Exception as e:
                     self.logger.warning(f"Не удалось установить batch_size для embedding: {e}")
-            
-            # Обновляем current_loaded_model только если это не параллельная загрузка
+
             if not skip_unload:
                 self.current_loaded_model = "diarization"
             self.gpu_manager.take_snapshot("after_diarization")
-            
-            self.logger.info("✅ PyAnnote загружен успешно")
+
+            device_note = "GPU" if self.diarization_device == "cuda" else "CPU"
+            self.logger.info(f"✅ PyAnnote загружен успешно ({device_note})")
             return True
-            
+
         except Exception as e:
+            msg = str(e)
             self.logger.error(f"❌ Ошибка загрузки PyAnnote: {e}", exc_info=True)
-            self.logger.error("Проверьте HF_TOKEN и права доступа к модели")
+            if any(token in msg.lower() for token in ("401", "403", "gated", "token", "authorization")):
+                self.logger.error("Проверьте HF_TOKEN и права доступа к модели")
             await self.gpu_manager.cleanup("deep")
             return False
-        finally:
-            # Гарантированно восстанавливаем LD_LIBRARY_PATH
-            if old_ld_library_path:
-                os.environ["LD_LIBRARY_PATH"] = old_ld_library_path
-                self.logger.info("✅ LD_LIBRARY_PATH восстановлен")
 
     # ==================== SILERO VAD ====================
 
@@ -711,6 +738,7 @@ class ModelManager:
             elif self.current_loaded_model == "diarization":
                 del self.diarization_pipeline
                 self.diarization_pipeline = None
+                self.diarization_device = "cpu"
 
             elif self.current_loaded_model == "qwen":
                 del self.qwen_model
@@ -737,6 +765,7 @@ class ModelManager:
             self.whisper_model = None
             self.whisper_backend = None
             self.diarization_pipeline = None
+            self.diarization_device = "cpu"
             
             if self.current_loaded_model in ("whisper", "diarization"):
                 self.current_loaded_model = None
@@ -761,6 +790,7 @@ class ModelManager:
         self.whisper_model = None
         self.whisper_backend = None
         self.diarization_pipeline = None
+        self.diarization_device = "cpu"
         self.qwen_model = None
         self.qwen_tokenizer = None
         self.current_loaded_model = None
