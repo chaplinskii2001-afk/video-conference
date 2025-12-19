@@ -17,9 +17,3 @@ psutil==5.9.8
 accelerate>=0.30.0
 bitsandbytes>=0.43.1
 tiktoken==0.7.0
-
-# Whisper (CTranslate2)
-faster-whisper>=1.1.0
-
-# VAD (silence removal before diarization)
-silero-vad>=5.1.2

@@ -11,23 +11,17 @@ logger = logging.getLogger(__name__)
 
 class GPUConfig:
     """Конфигурация на основе доступной GPU памяти"""
-
+    
     # Определяем профили для разных классов GPU
     PROFILES = {
         "low": {
             "name": "Базовый (4-6 GB VRAM)",
             "min_vram_gb": 0,
             "max_vram_gb": 6,
-            "whisper_model_id": "Systran/faster-whisper-medium",
-            "whisper_compute_type": "int8_float16",
+            "whisper_quantization": "float16",
             "qwen_quantization": "4bit",
-            "qwen_flash_attention_2": False,
-            "qwen_torch_compile": False,
             "batch_size": 2,
             "diarization_batch_size": 16,
-            "diarization_use_silero_vad": True,
-            "silero_vad_threshold": 0.5,
-            "silero_vad_speech_pad_ms": 250,
             "max_audio_length_minutes": 120,
             "chunk_length_s": 30,
             "stride_length_s": (4, 2),
@@ -36,16 +30,10 @@ class GPUConfig:
             "name": "Средний (8-12 GB VRAM)",
             "min_vram_gb": 6,
             "max_vram_gb": 12,
-            "whisper_model_id": "Systran/faster-whisper-large-v3",
-            "whisper_compute_type": "int8_float16",
+            "whisper_quantization": "float32",
             "qwen_quantization": "8bit",
-            "qwen_flash_attention_2": False,
-            "qwen_torch_compile": False,
             "batch_size": 2,
             "diarization_batch_size": 32,
-            "diarization_use_silero_vad": True,
-            "silero_vad_threshold": 0.5,
-            "silero_vad_speech_pad_ms": 250,
             "max_audio_length_minutes": 140,
             "chunk_length_s": 30,
             "stride_length_s": (5, 2),
@@ -54,16 +42,10 @@ class GPUConfig:
             "name": "Мощный (16-24 GB VRAM)",
             "min_vram_gb": 12,
             "max_vram_gb": 24,
-            "whisper_model_id": "Systran/faster-whisper-large-v3",
-            "whisper_compute_type": "int8_float16",
+            "whisper_quantization": "float32",
             "qwen_quantization": "float16",
-            "qwen_flash_attention_2": True,
-            "qwen_torch_compile": True,
             "batch_size": 4,
             "diarization_batch_size": 64,
-            "diarization_use_silero_vad": True,
-            "silero_vad_threshold": 0.5,
-            "silero_vad_speech_pad_ms": 250,
             "max_audio_length_minutes": 180,
             "chunk_length_s": 30,
             "stride_length_s": (6, 2),
@@ -72,20 +54,14 @@ class GPUConfig:
             "name": "Профессиональный (24+ GB VRAM)",
             "min_vram_gb": 24,
             "max_vram_gb": 999,
-            "whisper_model_id": "Systran/faster-whisper-large-v3",
-            "whisper_compute_type": "int8_float16",
+            "whisper_quantization": "float32",
             "qwen_quantization": "float16",
-            "qwen_flash_attention_2": True,
-            "qwen_torch_compile": True,
             "batch_size": 8,
             "diarization_batch_size": 128,
-            "diarization_use_silero_vad": True,
-            "silero_vad_threshold": 0.5,
-            "silero_vad_speech_pad_ms": 250,
             "max_audio_length_minutes": 300,
             "chunk_length_s": 30,
             "stride_length_s": (6, 2),
-        },
+        }
     }
 
     @staticmethod
@@ -141,20 +117,14 @@ class GPUConfig:
         """Конфигурация для CPU (резервный режим)"""
         return {
             "name": "CPU режим",
-            "whisper_model_id": "Systran/faster-whisper-small",
-            "whisper_compute_type": "int8",
+            "whisper_quantization": "8bit",
             "qwen_quantization": "4bit",
-            "qwen_flash_attention_2": False,
-            "qwen_torch_compile": False,
             "batch_size": 1,
             "diarization_batch_size": 8,
-            "diarization_use_silero_vad": True,
-            "silero_vad_threshold": 0.5,
-            "silero_vad_speech_pad_ms": 250,
             "max_audio_length_minutes": 30,
             "chunk_length_s": 20,
             "stride_length_s": (3, 1),
-            "gpu_info": {"available": False, "vram_gb": 0, "name": "CPU"},
+            "gpu_info": {"available": False, "vram_gb": 0, "name": "CPU"}
         }
 
 
@@ -168,8 +138,7 @@ class AppConfig:
     MODELS_DIR = "/app/models"
     
     # Пути к моделям
-    # faster-whisper использует CTranslate2-модели с HuggingFace (Systran/faster-whisper-*)
-    WHISPER_MODEL_ID = "Systran/faster-whisper-large-v3"
+    WHISPER_MODEL_ID = "bond005/whisper-podlodka-turbo"
     WHISPER_MODEL_PATH = f"{MODELS_DIR}/whisper"
     
     DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"

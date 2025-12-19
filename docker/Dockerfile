@@ -34,16 +34,12 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 RUN pip3 install pynvml psutil huggingface_hub
 
-# 1. Whisper (faster-whisper / CTranslate2)
-RUN python3 -c "from faster_whisper import WhisperModel; \
-    WhisperModel('Systran/faster-whisper-large-v3', device='cpu', compute_type='int8', download_root='/app/models/whisper'); \
-    print('faster-whisper model downloaded')"
-
-# Silero VAD (cached via torch.hub)
-RUN python3 -c "import torch; \
-    torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False); \
-    print('Silero VAD downloaded')"
-
+# 1. Whisper
+RUN python3 -c "from transformers import WhisperProcessor, WhisperForConditionalGeneration; \
+    WhisperProcessor.from_pretrained('bond005/whisper-podlodka-turbo'); \
+    WhisperForConditionalGeneration.from_pretrained('bond005/whisper-podlodka-turbo'); \
+    print('Whisper model downloaded')"
+    
 # 2. PyAnnote
 RUN python3 -c "import torch; import torchaudio; \
     from pyannote.audio import Pipeline; \
