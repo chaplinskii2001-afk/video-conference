@@ -25,6 +25,12 @@ RUN rm -f /etc/apt/sources.list.d/cuda.list \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
+# Установка полного набора библиотек cuDNN 9 для CUDA 12
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libcudnn9-cuda-12 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 RUN mkdir -p /app/models/whisper /app/models/pyannote /app/models/qwen /app/logs /app/uploads /app/results
 
