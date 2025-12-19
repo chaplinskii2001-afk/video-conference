@@ -69,3 +69,10 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Documentation (temporary fix notes)
+CHANGES_SUMMARY.md
+FIX_CUDNN_ISSUE.md
+test_cudnn_versions.py
+COMMIT_MESSAGE.txt
+SOLUTION_README.md
