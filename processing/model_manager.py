@@ -111,52 +111,7 @@ class ModelManager:
 
             whisper_path = self.config["model_config"]["whisper_path"]
             os.makedirs(whisper_path, exist_ok=True)
-            
-            # Получаем ID модели из конфигурации
             whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
-            
-            self.logger.info(f"🔍 ДИАГНОСТИКА МОДЕЛИ WHISPER:")
-            self.logger.info(f"   gpu_config.whisper_model_id: {self.gpu_config.get('whisper_model_id')}")
-            self.logger.info(f"   model_config.whisper_id: {self.config['model_config']['whisper_id']}")
-            self.logger.info(f"   final whisper_id: {whisper_id}")
-            
-            # АГРЕССИВНАЯ ОЧИСТКА КЭША - удаляем ВСЕ папки старых моделей
-            self.logger.info(f"🧹 Агрессивная очистка кэша Whisper...")
-            import shutil
-            
-            # Очищаем локальный кэш моделей
-            if os.path.exists(whisper_path):
-                for item in os.listdir(whisper_path):
-                    item_path = os.path.join(whisper_path, item)
-                    if os.path.isdir(item_path):
-                        # Удаляем любые папки, которые не соответствуют новой модели
-                        if not item.startswith("models--Systran--faster-whisper-large-v3"):
-                            self.logger.warning(f"🗑️ Удаление неправильной модели: {item_path}")
-                            shutil.rmtree(item_path, ignore_errors=True)
-                        else:
-                            self.logger.info(f"✅ Сохраняем правильную модель: {item}")
-            
-            # Очищаем глобальный кэш HuggingFace
-            try:
-                import huggingface_hub
-                cache_dir = huggingface_hub.constants.HUGGINGFACE_HUB_CACHE
-                self.logger.info(f"🧹 Очистка HuggingFace кэша: {cache_dir}")
-                # Не удаляем весь кэш, а только связанный с Whisper
-                if os.path.exists(cache_dir):
-                    for item in os.listdir(cache_dir):
-                        if "whisper" in item.lower() or "bond005" in item.lower():
-                            item_path = os.path.join(cache_dir, item)
-                            if os.path.isdir(item_path):
-                                self.logger.warning(f"🗑️ Удаление Whisper кэша: {item_path}")
-                                shutil.rmtree(item_path, ignore_errors=True)
-            except Exception as e:
-                self.logger.warning(f"Не удалось очистить HuggingFace кэш: {e}")
-            
-            # Очищаем locks и временные файлы
-            locks_path = os.path.join(whisper_path, ".locks")
-            if os.path.exists(locks_path):
-                self.logger.warning(f"🗑️ Удаление locks: {locks_path}")
-                shutil.rmtree(locks_path, ignore_errors=True)
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = self.gpu_config.get("whisper_compute_type")
@@ -201,29 +156,28 @@ class ModelManager:
             error_msg = str(e)
             self.logger.error(f"❌ Ошибка загрузки Whisper (faster-whisper): {e}", exc_info=True)
             
-            # Если ошибка связана с отсутствием файла модели, попробуем очистить кэш и перезагрузить
+            # Если ошибка связана с отсутствием файла модели, попробуем очистить кэш и переза грузить
             if "Unable to open file" in error_msg or "model.bin" in error_msg:
                 self.logger.warning("🔄 Обнаружена проблема с кэшем моделей. Попытка очистки и перезагрузки...")
                 try:
                     import shutil
-                    
-                    # ПОЛНАЯ ОЧИСТКА КЭША
+                    # Очищаем подозрительные кэш-папки
                     whisper_path = self.config["model_config"]["whisper_path"]
-                    self.logger.warning(f"🧹 ПОЛНАЯ ОЧИСТКА: Удаление всего содержимого {whisper_path}")
                     if os.path.exists(whisper_path):
-                        shutil.rmtree(whisper_path, ignore_errors=True)
+                        for item in os.listdir(whisper_path):
+                            item_path = os.path.join(whisper_path, item)
+                            # Проверяем, это ли неправильная модель (содержит model.bin или других файлов)
+                            if os.path.isdir(item_path):
+                                model_bin_path = os.path.join(item_path, "model.bin")
+                                if not os.path.exists(model_bin_path):
+                                    # Это пустая или поврежденная папка
+                                    self.logger.warning(f"🗑️ Удаление поврежденной папки: {item_path}")
+                                    shutil.rmtree(item_path, ignore_errors=True)
                     
-                    # Пересоздаем директорию
-                    os.makedirs(whisper_path, exist_ok=True)
-                    
-                    # Повторяем попытку загрузки С ПРАВИЛЬНОЙ МОДЕЛЬЮ
+                    # Повторяем попытку загрузки
                     self.logger.info("🔄 Повторная попытка загрузки Whisper...")
                     from faster_whisper import WhisperModel
-                    
-                    # Явно получаем правильную модель
                     whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
-                    self.logger.info(f"🔄 ПОВТОРНАЯ ПОПЫТКА с моделью: {whisper_id}")
-                    
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     compute_type = self.gpu_config.get("whisper_compute_type")
                     if not compute_type:
@@ -252,7 +206,7 @@ class ModelManager:
                         self.current_loaded_model = "whisper"
                     
                     self.gpu_manager.take_snapshot("after_whisper")
-                    self.logger.info("✅ Whisper загружен успешно после ПОЛНОЙ очистки кэша")
+                    self.logger.info("✅ Whisper загружен успешно после очистки кэша")
                     return True
                 except Exception as retry_error:
                     self.logger.error(f"❌ Ошибка при повторной загрузке Whisper: {retry_error}", exc_info=True)
@@ -710,27 +664,19 @@ class ModelManager:
         """
         try:
             self.logger.info("🔄 Проверка готовности моделей...")
-
+            
             whisper_path = self.config["model_config"]["whisper_path"]
             pyannote_path = self.config["model_config"]["diarization_path"]
             qwen_path = self.config["model_config"]["qwen_path"]
-
+            
             models_ready = True
-
-            # ДИАГНОСТИКА МОДЕЛИ WHISPER ПРИ ИНИЦИАЛИЗАЦИИ
-            whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
-            self.logger.info(f"🔍 ДИАГНОСТИКА WHISPER ПРИ STARTUP:")
-            self.logger.info(f"   gpu_config.whisper_model_id: {self.gpu_config.get('whisper_model_id')}")
-            self.logger.info(f"   model_config.whisper_id: {self.config['model_config']['whisper_id']}")
-            self.logger.info(f"   final whisper_id: {whisper_id}")
-            self.logger.info(f"   whisper_path: {whisper_path}")
-
+            
             # Проверка Whisper
             if not os.path.exists(whisper_path) or not os.listdir(whisper_path):
                 self.logger.info("📥 Загрузка модели Whisper...")
                 try:
                     from faster_whisper import WhisperModel
-                    self.logger.info(f"🔄 ИНИЦИАЛИЗАЦИЯ: Загружаем модель {whisper_id}")
+                    whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     compute_type = self.gpu_config.get("whisper_compute_type", "int8_float16")
                     
