@@ -7,6 +7,9 @@ from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 
+# ВАЖНО: Переопределяем HF_HOME перед импортом любых HuggingFace моделей
+os.environ['HF_HOME'] = '/app/models'
+
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -103,6 +106,18 @@ async def lifespan(app: FastAPI):
     os.makedirs("/app/models/whisper", exist_ok=True)
     os.makedirs("/app/models/pyannote", exist_ok=True)
     os.makedirs("/app/models/qwen", exist_ok=True)
+    
+    # ВАЖНО: Полная очистка глобального HuggingFace кэша при старте
+    logger.info("🧹 Очистка глобального HuggingFace кэша при инициализации...")
+    try:
+        import shutil
+        import huggingface_hub
+        cache_dir = huggingface_hub.constants.HUGGINGFACE_HUB_CACHE
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            logger.info(f"✅ Глобальный кэш очищен: {cache_dir}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось очистить глобальный кэш: {e}")
 
     global processor
     processor = VideoProcessor()
