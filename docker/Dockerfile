@@ -1,9 +1,6 @@
-FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ARG HF_TOKEN
-
-# Очищаем LD_LIBRARY_PATH чтобы PyTorch использовал встроенный cuDNN
-ENV LD_LIBRARY_PATH=""
 
 RUN rm -f /etc/apt/sources.list.d/cuda.list \
     /etc/apt/sources.list.d/nvidia-ml.list && \
@@ -29,7 +26,7 @@ RUN mkdir -p /app/models/whisper /app/models/pyannote /app/models/qwen /app/logs
 
 RUN pip3 install --upgrade pip setuptools wheel && \
     pip3 install "pyannote.audio @ git+https://github.com/pyannote/pyannote-audio.git" \
-    --extra-index-url https://download.pytorch.org/whl/cu126 \
+    --extra-index-url https://download.pytorch.org/whl/cu124 \
     --no-cache-dir
 
 COPY requirements.txt .
