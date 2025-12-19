@@ -108,19 +108,12 @@ class ModelManager:
 
         try:
             from faster_whisper import WhisperModel
-            import shutil
 
             whisper_path = self.config["model_config"]["whisper_path"]
             os.makedirs(whisper_path, exist_ok=True)
             
-            # Получаем ID модели из конфигурации (ВСЕГДА Systran/faster-whisper-large-v3!)
+            # Получаем ID модели из конфигурации
             whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
-            
-            # ВАЖНО: Убедимся, что используется правильная модель
-            if whisper_id != "Systran/faster-whisper-large-v3":
-                self.logger.warning(f"⚠️ Обнаружена неправильная модель: {whisper_id}")
-                self.logger.warning(f"🔄 Переопределяем на правильную: Systran/faster-whisper-large-v3")
-                whisper_id = "Systran/faster-whisper-large-v3"
             
             self.logger.info(f"🔍 ДИАГНОСТИКА МОДЕЛИ WHISPER:")
             self.logger.info(f"   gpu_config.whisper_model_id: {self.gpu_config.get('whisper_model_id')}")
@@ -129,6 +122,7 @@ class ModelManager:
             
             # АГРЕССИВНАЯ ОЧИСТКА КЭША - удаляем ВСЕ папки старых моделей
             self.logger.info(f"🧹 Агрессивная очистка кэша Whisper...")
+            import shutil
             
             # Очищаем локальный кэш моделей
             if os.path.exists(whisper_path):
@@ -142,14 +136,19 @@ class ModelManager:
                         else:
                             self.logger.info(f"✅ Сохраняем правильную модель: {item}")
             
-            # Очищаем глобальный кэш HuggingFace полностью
+            # Очищаем глобальный кэш HuggingFace
             try:
                 import huggingface_hub
                 cache_dir = huggingface_hub.constants.HUGGINGFACE_HUB_CACHE
-                self.logger.info(f"🧹 ПОЛНАЯ очистка глобального HuggingFace кэша: {cache_dir}")
+                self.logger.info(f"🧹 Очистка HuggingFace кэша: {cache_dir}")
+                # Не удаляем весь кэш, а только связанный с Whisper
                 if os.path.exists(cache_dir):
-                    shutil.rmtree(cache_dir, ignore_errors=True)
-                    self.logger.info(f"✅ Глобальный кэш полностью очищен")
+                    for item in os.listdir(cache_dir):
+                        if "whisper" in item.lower() or "bond005" in item.lower():
+                            item_path = os.path.join(cache_dir, item)
+                            if os.path.isdir(item_path):
+                                self.logger.warning(f"🗑️ Удаление Whisper кэша: {item_path}")
+                                shutil.rmtree(item_path, ignore_errors=True)
             except Exception as e:
                 self.logger.warning(f"Не удалось очистить HuggingFace кэш: {e}")
             
@@ -158,10 +157,6 @@ class ModelManager:
             if os.path.exists(locks_path):
                 self.logger.warning(f"🗑️ Удаление locks: {locks_path}")
                 shutil.rmtree(locks_path, ignore_errors=True)
-
-            # Переопределяем HF_HOME на локальную директорию моделей
-            os.environ['HF_HOME'] = '/app/models'
-            self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             compute_type = self.gpu_config.get("whisper_compute_type")
@@ -212,21 +207,11 @@ class ModelManager:
                 try:
                     import shutil
                     
-                    # ПОЛНАЯ ОЧИСТКА ВСЕХ КЭШЕЙ
+                    # ПОЛНАЯ ОЧИСТКА КЭША
                     whisper_path = self.config["model_config"]["whisper_path"]
                     self.logger.warning(f"🧹 ПОЛНАЯ ОЧИСТКА: Удаление всего содержимого {whisper_path}")
                     if os.path.exists(whisper_path):
                         shutil.rmtree(whisper_path, ignore_errors=True)
-                    
-                    # Полная очистка глобального кэша
-                    try:
-                        import huggingface_hub
-                        cache_dir = huggingface_hub.constants.HUGGINGFACE_HUB_CACHE
-                        self.logger.warning(f"🧹 ПОЛНАЯ очистка глобального кэша: {cache_dir}")
-                        if os.path.exists(cache_dir):
-                            shutil.rmtree(cache_dir, ignore_errors=True)
-                    except Exception as e:
-                        self.logger.warning(f"Не удалось очистить глобальный кэш: {e}")
                     
                     # Пересоздаем директорию
                     os.makedirs(whisper_path, exist_ok=True)
@@ -235,13 +220,9 @@ class ModelManager:
                     self.logger.info("🔄 Повторная попытка загрузки Whisper...")
                     from faster_whisper import WhisperModel
                     
-                    # ВСЕГДА используем правильную модель
-                    whisper_id = "Systran/faster-whisper-large-v3"
+                    # Явно получаем правильную модель
+                    whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
                     self.logger.info(f"🔄 ПОВТОРНАЯ ПОПЫТКА с моделью: {whisper_id}")
-                    
-                    # Переопределяем HF_HOME
-                    os.environ['HF_HOME'] = '/app/models'
-                    self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
                     
                     device = "cuda" if torch.cuda.is_available() else "cpu"
                     compute_type = self.gpu_config.get("whisper_compute_type")
@@ -728,10 +709,6 @@ class ModelManager:
         после docker system prune -a --volumes.
         """
         try:
-            # Переопределяем HF_HOME при инициализации
-            os.environ['HF_HOME'] = '/app/models'
-            self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
-            
             self.logger.info("🔄 Проверка готовности моделей...")
 
             whisper_path = self.config["model_config"]["whisper_path"]
@@ -742,13 +719,6 @@ class ModelManager:
 
             # ДИАГНОСТИКА МОДЕЛИ WHISPER ПРИ ИНИЦИАЛИЗАЦИИ
             whisper_id = self.gpu_config.get("whisper_model_id") or self.config["model_config"]["whisper_id"]
-            
-            # ВАЖНО: Убедимся, что используется правильная модель
-            if whisper_id != "Systran/faster-whisper-large-v3":
-                self.logger.warning(f"⚠️ Обнаружена неправильная модель при startup: {whisper_id}")
-                self.logger.warning(f"🔄 Переопределяем на: Systran/faster-whisper-large-v3")
-                whisper_id = "Systran/faster-whisper-large-v3"
-            
             self.logger.info(f"🔍 ДИАГНОСТИКА WHISPER ПРИ STARTUP:")
             self.logger.info(f"   gpu_config.whisper_model_id: {self.gpu_config.get('whisper_model_id')}")
             self.logger.info(f"   model_config.whisper_id: {self.config['model_config']['whisper_id']}")
