@@ -426,9 +426,17 @@ class ModelManager:
         self.logger.info("Загрузка PyAnnote модели...")
         self.gpu_manager.take_snapshot("before_diarization")
         
+        # Сохраняем текущий LD_LIBRARY_PATH и очищаем его для PyTorch
+        # Это решает конфликт cuDNN версий между системным и встроенным в PyTorch
+        old_ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
+        
         try:
             diarization_id = self.config["model_config"]["diarization_id"]
             diarization_path = self.config["model_config"]["diarization_path"]
+            
+            if old_ld_library_path:
+                self.logger.info(f"🔧 Временно очищаем LD_LIBRARY_PATH для избежания конфликта cuDNN")
+                os.environ["LD_LIBRARY_PATH"] = ""
             
             # Загружаем pipeline
             self.diarization_pipeline = Pipeline.from_pretrained(
@@ -469,6 +477,11 @@ class ModelManager:
             self.logger.error("Проверьте HF_TOKEN и права доступа к модели")
             await self.gpu_manager.cleanup("deep")
             return False
+        finally:
+            # Гарантированно восстанавливаем LD_LIBRARY_PATH
+            if old_ld_library_path:
+                os.environ["LD_LIBRARY_PATH"] = old_ld_library_path
+                self.logger.info("✅ LD_LIBRARY_PATH восстановлен")
 
     # ==================== SILERO VAD ====================
 
