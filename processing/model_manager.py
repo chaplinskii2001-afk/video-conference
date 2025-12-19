@@ -66,16 +66,6 @@ class ModelManager:
         self.gpu_config = config.get("gpu_config", {})
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        # Важно: заранее подгружаем cuDNN из Python wheels (nvidia-cudnn/torch),
-        # чтобы избежать конфликтов версий между системной cuDNN и той, с которой собран PyTorch.
-        if torch.cuda.is_available():
-            try:
-                from processing.cuda_preload import preload_cudnn
-
-                preload_cudnn(logger=self.logger)
-            except Exception as e:
-                self.logger.warning(f"⚠️ Не удалось выполнить preload cuDNN: {e}")
-
         try:
             self.whisper_batch_size = int(self.gpu_config["batch_size"])
             self.max_audio_length_minutes = self.gpu_config["max_audio_length_minutes"]
@@ -97,29 +87,6 @@ class ModelManager:
         )
 
     # ==================== WHISPER (faster-whisper / CTranslate2) ====================
-
-    def _is_cudnn_cnn_available(self) -> bool:
-        if not torch.cuda.is_available():
-            return False
-
-        import ctypes
-
-        candidates = [
-            "libcudnn_cnn.so.9.1.0",
-            "libcudnn_cnn.so.9.1",
-            "libcudnn_cnn.so.9",
-            "libcudnn_cnn.so",
-        ]
-
-        for lib_name in candidates:
-            try:
-                lib = ctypes.CDLL(lib_name)
-                getattr(lib, "cudnnCreateConvolutionDescriptor")
-                return True
-            except (OSError, AttributeError):
-                continue
-
-        return False
 
     async def load_whisper(self, skip_unload: bool = False) -> bool:
         """Загрузка модели Whisper для транскрипции через faster-whisper (CTranslate2).
@@ -198,14 +165,7 @@ class ModelManager:
             self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            if device == "cuda" and not self._is_cudnn_cnn_available():
-                self.logger.error(
-                    "❌ cuDNN (libcudnn_cnn) не найден в контейнере. "
-                    "Чтобы избежать падения процесса, faster-whisper будет запущен на CPU. "
-                    "Используйте образ CUDA с cuDNN (например, *-cudnn-runtime) или установите libcudnn."
-                )
-                device = "cpu"
-
+            
             compute_type = self.gpu_config.get("whisper_compute_type")
             if not compute_type:
                 quantization = self.gpu_config.get("whisper_quantization", "int8")
@@ -293,13 +253,6 @@ class ModelManager:
                     self.logger.info(f"🌐 HF_HOME установлен на: /app/models")
                     
                     device = "cuda" if torch.cuda.is_available() else "cpu"
-                    if device == "cuda" and not self._is_cudnn_cnn_available():
-                        self.logger.error(
-                            "❌ cuDNN (libcudnn_cnn) не найден в контейнере. "
-                            "Чтобы избежать падения процесса, faster-whisper будет запущен на CPU. "
-                            "Используйте образ CUDA с cuDNN (например, *-cudnn-runtime) или установите libcudnn."
-                        )
-                        device = "cpu"
 
                     compute_type = self.gpu_config.get("whisper_compute_type")
                     if not compute_type:
@@ -454,14 +407,6 @@ class ModelManager:
             )
 
             if torch.cuda.is_available():
-                # Пытаемся гарантировать, что в процессе загружена правильная cuDNN
-                try:
-                    from processing.cuda_preload import preload_cudnn
-
-                    preload_cudnn(logger=self.logger)
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Не удалось выполнить preload cuDNN перед PyAnnote: {e}")
-
                 try:
                     self.diarization_pipeline.to(torch.device("cuda"))
                     self.diarization_device = "cuda"

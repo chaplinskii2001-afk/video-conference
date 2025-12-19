@@ -2,8 +2,9 @@ FROM nvidia/cuda:12.6.2-cudnn-runtime-ubuntu22.04
 
 ARG HF_TOKEN
 
-# Очищаем LD_LIBRARY_PATH чтобы PyTorch использовал встроенный cuDNN
-ENV LD_LIBRARY_PATH=""
+# Устанавливаем переменные окружения для CUDA
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
 
 RUN rm -f /etc/apt/sources.list.d/cuda.list \
     /etc/apt/sources.list.d/nvidia-ml.list && \
