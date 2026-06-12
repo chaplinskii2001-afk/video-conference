@@ -1,0 +1,36 @@
+# Веса моделей и кэш (НИКОГДА не пушить в GitHub)
+ai_models/
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.jit
+
+# Пользовательские данные
+uploads/
+results/
+logs/
+*.log
+
+# Секреты
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Docker и система
+.docker/
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/

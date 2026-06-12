@@ -1,0 +1,42 @@
+services:
+  video-processor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        HF_TOKEN: ${HF_TOKEN}
+    container_name: video_processor
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./results:/app/results
+      - /home/admin1/ai_models:/app/models
+      - ./main.py:/app/main.py
+      - ./task_manager.py:/app/task_manager.py
+      - ./processing:/app/processing
+      - ./static:/app/static
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
+      - PYANNOTE_DONT_ASK_USER_FOR_EMAIL=1
+#      - TRANSFORMERS_OFFLINE=1
+#      - HF_HUB_OFFLINE=1
+      - HF_HOME=/app/models/hf_home
+      - HF_HUB_CACHE=/app/models/hf_home/hub
+      - DISABLE_DF=1
+      - TRANSFORMERS_CACHE=/app/models/hf_home/transformers
+      - XDG_CACHE_HOME=/app/models/xdg_cache
+      - TORCH_HOME=/app/models/torch_home
+      - MODEL_NAME=Qwen/Qwen3-4B-Instruct-2507
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    restart: unless-stopped
+

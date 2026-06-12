@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система протоколирования совещаний</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Система протоколирования совещаний</h1>
+            <p>Автоматическая транскрипция, диаризация спикеров и создание протоколов</p>
+        </div>
+
+        <div class="content">
+            <div class="upload-section">
+                <div class="tabs">
+                    <button class="tab-button active" onclick="switchTab('file', event)">Загрузка файлов</button>
+                    <button class="tab-button" onclick="switchTab('url', event)">По ссылке</button>
+                </div>
+
+                <div id="file-tab" class="tab-content active">
+                    <input type="file" id="file-input" multiple accept=".mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.m4a,.flac,.aac,.ogg">
+                    <label for="file-input">
+                        <div class="file-upload-zone" id="file-upload-zone">
+                            <div class="file-upload-text">Выберите один или несколько файлов (можно перетащить сюда)</div>
+                            <div class="file-upload-hint">Поддерживаются видео и аудио форматы (до 1 GB)</div>
+                        </div>
+                    </label>
+
+                    <div id="file-list" class="file-list hidden"></div>
+                </div>
+
+                <div id="url-tab" class="tab-content">
+                    <div class="url-input-wrapper">
+                        <input
+                            type="url"
+                            id="url-input"
+                            placeholder="https://youtube.com/watch?v=..."
+                            autocomplete="off"
+                        >
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="summary-type">Тип документа</label>
+                    <select id="summary-type">
+                        <option value="standard">Краткое содержание</option>
+                        <option value="protocol">Протокол конференции</option>
+                    </select>
+                </div>
+
+                <button id="process-btn" onclick="startProcessing()">Начать обработку</button>
+            </div>
+
+            <div class="processing-layout">
+                <div class="main-panel">
+                    <div id="progress-section" class="progress-section hidden">
+                        <div class="batch-status">
+                            <div class="batch-status-row">
+                                <span class="batch-label">Сейчас:</span>
+                                <span id="batch-current-file" class="batch-value">—</span>
+                            </div>
+                            <div class="batch-status-row">
+                                <span class="batch-label">Далее:</span>
+                                <span id="batch-next-file" class="batch-value">—</span>
+                            </div>
+                        </div>
+
+                        <div class="stage-display">
+                            <div class="stage-content">
+                                <div class="stage-label">Идет обработка</div>
+                                <div class="stage-name" id="current-stage-name">Подготовка</div>
+                                <div class="stage-description" id="stage-description">Инициализация системы</div>
+                            </div>
+                        </div>
+
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-wrapper">
+                                <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                            </div>
+                            <div id="progress-percentage" class="progress-percentage">0%</div>
+                        </div>
+
+                        <div id="batch-queue" class="batch-queue"></div>
+                    </div>
+
+                    <div id="results-section" class="results-section hidden">
+                        <h3>Пакетная обработка завершена</h3>
+
+                        <div class="result-stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-label">Файлов успешно</div>
+                                <div class="stat-value" id="stat-success">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Ошибок</div>
+                                <div class="stat-value" id="stat-errors">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Всего файлов</div>
+                                <div class="stat-value" id="stat-total">0</div>
+                            </div>
+                        </div>
+
+                        <div class="results-hint">Готовые результаты доступны справа.</div>
+                    </div>
+
+                    <div id="error-section" class="error-section hidden">
+                        <div class="error-title">Ошибка</div>
+                        <div id="error-message" class="error-message"></div>
+                    </div>
+                </div>
+
+                <div class="side-panel">
+                    <div class="side-panel-header">
+                        <h3>Готовые результаты</h3>
+                        <button id="clear-history-btn" class="link-button" onclick="clearHistory()">Очистить</button>
+                    </div>
+                    <div id="completed-results" class="completed-results">
+                        <div class="completed-empty">Пока нет готовых файлов</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
